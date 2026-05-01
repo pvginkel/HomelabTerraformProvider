@@ -1,0 +1,11 @@
+# Go build artifacts
+terraform-provider-homelab
+*.exe
+*.test
+*.out
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
