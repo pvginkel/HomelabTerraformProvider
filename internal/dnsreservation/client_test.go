@@ -51,7 +51,7 @@ func TestClientPut_Created(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}
-		if body.MAC != "02:a7:f3:03:84:00" {
+		if body.MAC != "02:A7:F3:03:84:00" {
 			t.Errorf("body.MAC = %q", body.MAC)
 		}
 
@@ -59,11 +59,11 @@ func TestClientPut_Created(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(Reservation{Hostname: "srvk8sl1", MAC: body.MAC, IPv4: "10.1.3.27"})
 	})
 
-	res, err := client.Put(context.Background(), "srvk8sl1", "02:a7:f3:03:84:00")
+	res, err := client.Put(context.Background(), "srvk8sl1", "02:A7:F3:03:84:00")
 	if err != nil {
 		t.Fatalf("Put returned error: %v", err)
 	}
-	if res.Hostname != "srvk8sl1" || res.MAC != "02:a7:f3:03:84:00" || res.IPv4 != "10.1.3.27" {
+	if res.Hostname != "srvk8sl1" || res.MAC != "02:A7:F3:03:84:00" || res.IPv4 != "10.1.3.27" {
 		t.Errorf("unexpected reservation: %+v", res)
 	}
 }
@@ -71,10 +71,10 @@ func TestClientPut_Created(t *testing.T) {
 func TestClientPut_Updated(t *testing.T) {
 	client, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		_ = json.NewEncoder(w).Encode(Reservation{Hostname: "srvk8sl1", MAC: "02:a7:f3:03:84:01", IPv4: "10.1.3.27"})
+		_ = json.NewEncoder(w).Encode(Reservation{Hostname: "srvk8sl1", MAC: "02:A7:F3:03:84:01", IPv4: "10.1.3.27"})
 	})
 
-	res, err := client.Put(context.Background(), "srvk8sl1", "02:a7:f3:03:84:01")
+	res, err := client.Put(context.Background(), "srvk8sl1", "02:A7:F3:03:84:01")
 	if err != nil {
 		t.Fatalf("Put returned error: %v", err)
 	}
@@ -86,10 +86,10 @@ func TestClientPut_Updated(t *testing.T) {
 func TestClientPut_MacConflict(t *testing.T) {
 	client, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(errorEnvelope{Error: "mac_conflict", Message: "MAC 02:a7:f3:03:84:00 is already reserved for srvk8ss1"})
+		_ = json.NewEncoder(w).Encode(errorEnvelope{Error: "mac_conflict", Message: "MAC 02:A7:F3:03:84:00 is already reserved for srvk8ss1"})
 	})
 
-	_, err := client.Put(context.Background(), "srvk8sl1", "02:a7:f3:03:84:00")
+	_, err := client.Put(context.Background(), "srvk8sl1", "02:A7:F3:03:84:00")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -111,7 +111,7 @@ func TestClientPut_Unauthorized(t *testing.T) {
 		_ = json.NewEncoder(w).Encode(errorEnvelope{Error: "unauthorized", Message: "invalid token"})
 	})
 
-	_, err := client.Put(context.Background(), "srvk8sl1", "02:a7:f3:03:84:00")
+	_, err := client.Put(context.Background(), "srvk8sl1", "02:A7:F3:03:84:00")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -126,7 +126,7 @@ func TestClientPut_BadRequestNoEnvelope(t *testing.T) {
 		_, _ = io.WriteString(w, "not json")
 	})
 
-	_, err := client.Put(context.Background(), "srvk8sl1", "02:a7:f3:03:84:00")
+	_, err := client.Put(context.Background(), "srvk8sl1", "02:A7:F3:03:84:00")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -152,7 +152,7 @@ func TestClientGet_OK(t *testing.T) {
 		}
 		assertCommonHeaders(t, r, false)
 
-		_ = json.NewEncoder(w).Encode(Reservation{Hostname: "srvk8sl1", MAC: "02:a7:f3:03:84:00", IPv4: "10.1.3.27"})
+		_ = json.NewEncoder(w).Encode(Reservation{Hostname: "srvk8sl1", MAC: "02:A7:F3:03:84:00", IPv4: "10.1.3.27"})
 	})
 
 	res, err := client.Get(context.Background(), "srvk8sl1")
@@ -213,7 +213,7 @@ func TestClientInternalError_NoEnvelope(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 
-	_, err := client.Put(context.Background(), "srvk8sl1", "02:a7:f3:03:84:00")
+	_, err := client.Put(context.Background(), "srvk8sl1", "02:A7:F3:03:84:00")
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -226,7 +226,7 @@ func TestClientTrailingSlashBaseURL(t *testing.T) {
 	var seenPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seenPath = r.URL.Path
-		_ = json.NewEncoder(w).Encode(Reservation{Hostname: "srvk8sl1", MAC: "02:a7:f3:03:84:00", IPv4: "10.1.3.27"})
+		_ = json.NewEncoder(w).Encode(Reservation{Hostname: "srvk8sl1", MAC: "02:A7:F3:03:84:00", IPv4: "10.1.3.27"})
 	}))
 	t.Cleanup(srv.Close)
 

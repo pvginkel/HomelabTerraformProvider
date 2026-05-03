@@ -84,7 +84,7 @@ func TestAccDNSReservation_invalidMAC(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config:      reservationConfig(hostname, "AA:BB:CC:DD:EE:FF"),
+				Config:      reservationConfig(hostname, "aa:bb:cc:dd:ee:ff"),
 				ExpectError: regexp.MustCompile("Invalid MAC"),
 			},
 		},

@@ -17,15 +17,15 @@ func TestMacValidator(t *testing.T) {
 		unknown bool
 		wantErr bool
 	}{
-		{name: "valid lowercase", input: "02:a7:f3:03:84:00"},
+		{name: "valid uppercase", input: "02:A7:F3:03:84:00"},
 		{name: "valid all zeros", input: "00:00:00:00:00:00"},
-		{name: "valid digits and letters", input: "0a:1b:2c:3d:4e:5f"},
-		{name: "uppercase rejected", input: "02:A7:F3:03:84:00", wantErr: true},
+		{name: "valid digits and letters", input: "0A:1B:2C:3D:4E:5F"},
+		{name: "lowercase rejected", input: "02:a7:f3:03:84:00", wantErr: true},
 		{name: "mixed case rejected", input: "02:A7:f3:03:84:00", wantErr: true},
-		{name: "missing colons", input: "02a7f30384 00", wantErr: true},
-		{name: "wrong byte length", input: "02:a7:f3:03:84", wantErr: true},
-		{name: "extra byte", input: "02:a7:f3:03:84:00:11", wantErr: true},
-		{name: "non-hex char", input: "0g:a7:f3:03:84:00", wantErr: true},
+		{name: "missing colons", input: "02A7F30384 00", wantErr: true},
+		{name: "wrong byte length", input: "02:A7:F3:03:84", wantErr: true},
+		{name: "extra byte", input: "02:A7:F3:03:84:00:11", wantErr: true},
+		{name: "non-hex char", input: "0G:A7:F3:03:84:00", wantErr: true},
 		{name: "empty", input: "", wantErr: true},
 		{name: "null skipped", null: true},
 		{name: "unknown skipped", unknown: true},

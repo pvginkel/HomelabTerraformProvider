@@ -60,8 +60,8 @@ func (r *dnsReservationResource) Schema(_ context.Context, _ resource.SchemaRequ
 				},
 			},
 			"mac": schema.StringAttribute{
-				Description:         "MAC address bound to this hostname. Lowercase, colon-separated.",
-				MarkdownDescription: "MAC address bound to this hostname. Lowercase, colon-separated.",
+				Description:         "MAC address bound to this hostname. Uppercase, colon-separated.",
+				MarkdownDescription: "MAC address bound to this hostname. Uppercase, colon-separated.",
 				Required:            true,
 				Validators: []validator.String{
 					macValidator{},
