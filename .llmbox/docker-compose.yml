@@ -3,7 +3,7 @@ services:
     image: registry:5000/llmbox:latest
     network_mode: host
     pid: host
-    working_dir: /work/Ansible
+    working_dir: /work/HomelabTerraformProvider
     tty: true
     user: "${UID}:${GID}"
     environment:
