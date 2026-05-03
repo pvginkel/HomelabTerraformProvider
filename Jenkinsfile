@@ -1,7 +1,7 @@
 library('JenkinsPipelineUtils') _
 
 podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
-    containerTemplates.modern_app_dev('modern-app-dev')
+    containerTemplate(name: 'go', image: 'golang:1.25', command: 'sleep', args: 'infinity')
 ]) {
     node(POD_LABEL) {
         stage('Build terraform-provider-homelab') {
@@ -10,13 +10,15 @@ podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
                     credentialsId: '5f6fbd66-b41c-405f-b107-85ba6fd97f10',
                     url: 'https://github.com/pvginkel/HomelabTerraformProvider.git'
                     
-                container('modern-app-dev') {
+                container('go') {
+                    sh 'git config --global --add safe.directory \'*\''
+
                     def cacheHit = sh(
                         script: 'scripts/build-cache-get.sh terraform-provider-homelab-go-mod go.sum $HOME/go/pkg/mod',
                         returnStatus: true
                     ) == 0
 
-                    sh 'go build -o terraform-provider-homelab -ldflags "-X main.version=0.0.0"'
+                    sh 'go build -o terraform-provider-homelab -ldflags "-X main.version=0.1.0"'
                     sh 'go version -m terraform-provider-homelab'
 
                     if (!cacheHit) {
@@ -24,7 +26,7 @@ podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
                     }
                 }
 
-                writeJSON file: 'terraform-provider-homelab-metadata.json', json: [version: "0.0.0"]
+                writeJSON file: 'terraform-provider-homelab-metadata.json', json: [version: "0.1.0"]
 
                 archiveArtifacts artifacts: 'terraform-provider-homelab*', fingerprint: true
             }
