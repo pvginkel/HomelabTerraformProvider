@@ -1,12 +1,8 @@
 # CLAUDE.md
 
-Context for Claude Code working in this repo.
-
-## What this repo is
-
-Custom Terraform provider that bundles all homelab-specific resource types behind one provider. Built with [terraform-plugin-framework](https://github.com/hashicorp/terraform-plugin-framework).
-
-The first (and currently only) resource will be `homelab_dns_reservation`, talking to the dnsmasq sidecar API. Future resources for other homelab APIs land in this same provider.
+Context for Claude Code working in this repo. User-facing documentation
+(what the provider does, how to install it, per-resource reference) lives
+in [README.md](README.md) — read it once before editing resources.
 
 ## Naming (load-bearing — don't drift)
 
@@ -17,57 +13,41 @@ The first (and currently only) resource will be `homelab_dns_reservation`, talki
 | Provider source | `pvginkel/homelab` |
 | Resource prefix | `homelab_` |
 
-## Specs live in the sibling Ansible repo
+## Specs live in sibling repos
 
-The contract for the first resource:
+Each resource has its backend API spec'd outside this repo. Read the
+relevant spec before changing the corresponding resource.
 
-- `/work/Ansible/docs/specs/dns-reservation-api.md` — sidecar HTTP API surface
-- `/work/Ansible/docs/specs/dns-reservation-terraform.md` — Terraform resource shape
-
-Read both before implementing the resource.
-
-## Dev workflow
-
-Build the binary in place:
-
-```
-go build -o terraform-provider-homelab
-```
-
-Point Terraform at the local build via `~/.terraformrc`:
-
-```
-provider_installation {
-  dev_overrides {
-    "pvginkel/homelab" = "/work/HomelabTerraformProvider"
-  }
-  direct {}
-}
-```
-
-Consuming modules then declare:
-
-```
-terraform {
-  required_providers {
-    homelab = {
-      source = "pvginkel/homelab"
-    }
-  }
-}
-```
-
-`~/.terraformrc` is a per-machine concern — don't commit it.
+- `homelab_dns_reservation`
+  - `/work/Ansible/docs/specs/dns-reservation-api.md` — sidecar HTTP API surface
+  - `/work/Ansible/docs/specs/dns-reservation-terraform.md` — Terraform resource shape
+- `homelab_backup_credential`
+  - `/work/DockerImages/backup-server/api.md` — backup server HTTP API (the
+    `/credentials/*` group is the Terraform-facing surface)
 
 ## Operator runs Terraform — not Claude
 
-The operator runs all `terraform apply` / `terraform destroy` invocations against real infrastructure (the managed VMs live in `/work/Ansible/terraform/`). Claude prepares the change, proposes the exact command, and waits for full output. Same convention as `/work/Ansible/CLAUDE.md`.
+The operator runs all `terraform apply` / `terraform destroy` invocations
+against real infrastructure (the managed VMs live in
+`/work/Ansible/terraform/`). Claude prepares the change, proposes the
+exact command, and waits for full output. Same convention as
+`/work/Ansible/CLAUDE.md`.
 
-Read-only operations (inspecting files, running `go build`, `go test`) are fine for Claude to run directly.
+Read-only operations (inspecting files, `go build`, `go test` without
+`TF_ACC`) are fine for Claude to run directly.
 
 ## Conventions
 
 - Small, focused commits with clear messages. Don't batch unrelated work.
-- Commit messages: short imperative subject, body explains why. Always include the `Co-Authored-By` trailer for Claude.
-- Don't ship dormant config "for later" — implement and exercise it now, or drop it.
-- Strip scaffolding/walkthrough comments once a file is built. Keep only comments that carry a non-obvious *why*.
+- Commit messages: short imperative subject, body explains why. Always
+  include the `Co-Authored-By` trailer for Claude.
+- Don't ship dormant config "for later" — implement and exercise it now,
+  or drop it.
+- Strip scaffolding/walkthrough comments once a file is built. Keep only
+  comments that carry a non-obvious *why*.
+- Mirror the existing resource layout when adding a new one: each resource
+  gets its own `internal/<name>/` package with `models.go`, `errors.go`,
+  `client.go`, `resource.go`, and matching `client_test.go` +
+  acceptance-test pair. The provider wires the per-resource client via a
+  package-local `ProviderData` interface so the resource package stays
+  independent of `internal/provider`.

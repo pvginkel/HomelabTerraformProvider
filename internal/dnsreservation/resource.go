@@ -19,6 +19,13 @@ var (
 	_ resource.ResourceWithImportState = (*dnsReservationResource)(nil)
 )
 
+// ProviderData is the interface the provider's wiring satisfies. It lets this
+// package pick out its own client without importing the provider package
+// (which would cause an import cycle).
+type ProviderData interface {
+	DNSReservationClient() *Client
+}
+
 func NewResource() resource.Resource {
 	return &dnsReservationResource{}
 }
@@ -83,11 +90,20 @@ func (r *dnsReservationResource) Configure(_ context.Context, req resource.Confi
 	if req.ProviderData == nil {
 		return
 	}
-	client, ok := req.ProviderData.(*Client)
+	data, ok := req.ProviderData.(ProviderData)
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected provider data type",
-			fmt.Sprintf("Expected *dnsreservation.Client, got %T. Please report this as a provider bug.", req.ProviderData),
+			fmt.Sprintf("Expected dnsreservation.ProviderData, got %T. Please report this as a provider bug.", req.ProviderData),
+		)
+		return
+	}
+	client := data.DNSReservationClient()
+	if client == nil {
+		resp.Diagnostics.AddError(
+			"DNS reservation sidecar not configured",
+			"homelab_dns_reservation requires dns_reservation_url and dns_reservation_token to be set on the provider block, "+
+				"or HOMELAB_DNS_RESERVATION_URL and HOMELAB_DNS_RESERVATION_TOKEN in the environment.",
 		)
 		return
 	}
