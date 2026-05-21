@@ -14,7 +14,8 @@
 
 set -euo pipefail
 
-VERSION="${VERSION:-0.1.0}"
+REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+VERSION="${VERSION:-$(cat "${REPO_DIR}/version.txt")}"
 PLUGIN_ROOT="${PLUGIN_ROOT:-/usr/local/share/terraform/plugins}"
 GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"
@@ -22,7 +23,6 @@ GOARCH="${GOARCH:-amd64}"
 NAMESPACE="pvginkel"
 NAME="homelab"
 BIN="terraform-provider-${NAME}"
-REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 DEST_DIR="${PLUGIN_ROOT}/registry.terraform.io/${NAMESPACE}/${NAME}/${VERSION}/${GOOS}_${GOARCH}"
 DEST_BIN="${DEST_DIR}/${BIN}_v${VERSION}"
 

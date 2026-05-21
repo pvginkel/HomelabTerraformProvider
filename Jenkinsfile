@@ -9,7 +9,9 @@ podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
                 git branch: 'main',
                     credentialsId: '5f6fbd66-b41c-405f-b107-85ba6fd97f10',
                     url: 'https://github.com/pvginkel/HomelabTerraformProvider.git'
-                    
+
+                def version = readFile('version.txt').trim()
+
                 container('go') {
                     sh 'git config --global --add safe.directory \'*\''
 
@@ -18,7 +20,7 @@ podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
                         returnStatus: true
                     ) == 0
 
-                    sh 'go build -o terraform-provider-homelab -ldflags "-X main.version=0.1.0"'
+                    sh "go build -o terraform-provider-homelab -ldflags '-X main.version=${version}'"
                     sh 'go version -m terraform-provider-homelab'
 
                     if (!cacheHit) {
@@ -26,7 +28,7 @@ podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
                     }
                 }
 
-                writeJSON file: 'terraform-provider-homelab-metadata.json', json: [version: "0.1.0"]
+                writeJSON file: 'terraform-provider-homelab-metadata.json', json: [version: version]
 
                 archiveArtifacts artifacts: 'terraform-provider-homelab*', fingerprint: true
             }
