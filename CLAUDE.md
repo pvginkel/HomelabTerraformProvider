@@ -39,8 +39,6 @@ Read-only operations (inspecting files, `go build`, `go test` without
 ## Conventions
 
 - Small, focused commits with clear messages. Don't batch unrelated work.
-- Commit messages: short imperative subject, body explains why. Always
-  include the `Co-Authored-By` trailer for Claude.
 - Don't ship dormant config "for later" — implement and exercise it now,
   or drop it.
 - Strip scaffolding/walkthrough comments once a file is built. Keep only
