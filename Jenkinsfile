@@ -1,4 +1,4 @@
-library('JenkinsPipelineUtils') _
+library identifier: 'JenkinsPipelineUtils', changelog: false
 
 podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
     containerTemplate(name: 'go', image: 'golang:1.25', command: 'sleep', args: 'infinity')
