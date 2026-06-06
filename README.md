@@ -11,37 +11,45 @@ behind one provider. Built with
 | Go module        | `github.com/pvginkel/HomelabTerraformProvider`     |
 | Resource prefix  | `homelab_`                                         |
 
-The provider is consumed via a Terraform `dev_overrides` block; nothing is
-published to a registry. `dev_overrides` bypasses the registry, the version
-constraint, and the consumer's `.terraform.lock.hcl` — a rebuilt binary is
-picked up with no `terraform init` and no lock refresh.
+The provider is consumed via a baked-in **filesystem mirror**, not a registry.
+The Jenkins build stamps each build as `0.1.<build-number>`, archives the
+binary, and the `iac` / `modern-app-dev` images install it into the mirror at
+`/usr/local/share/terraform/plugins/...`. `TF_CLI_CONFIG_FILE=/etc/terraform.rc`
+in those images points Terraform there, so `terraform init` resolves
+`pvginkel/homelab` with no per-machine setup. Because every build is a new
+version, the CI job also rewrites the consumer's `.terraform.lock.hcl` (in the
+Ansible repo) to match — no manual `terraform init -upgrade`.
 
 ## Install
 
-`scripts/install-local.sh` builds the binary and installs it into the
-dev-override directory (`~/.local/lib/terraform-providers` by default):
+Two scripts populate the mirror layout on a box:
 
 ```sh
+# build from local source (provider development) — installs version.txt's version
 ./scripts/install-local.sh
+
+# fetch the CI-built (released) binary from Jenkins — installs 0.1.<build>
+JENKINS_URL=https://jenkins.home ./scripts/fetch-install.sh
 ```
 
-The Terraform CLI config must point a dev override at that directory. The
-`modern-app-dev` image already ships this at `/etc/terraform.rc`
-(`TF_CLI_CONFIG_FILE`); for a bare workstation, put it in `~/.terraformrc`:
+Both default to `PLUGIN_ROOT=/usr/local/share/terraform/plugins`. A local
+source build is a one-off version, so it won't match the CI-maintained lock —
+run `terraform init -upgrade` in the consumer dir when iterating locally.
+
+The mirror config Terraform reads (already baked into the images at
+`/etc/terraform.rc`):
 
 ```hcl
 provider_installation {
-  dev_overrides {
-    "pvginkel/homelab" = "/home/youruser/.local/lib/terraform-providers"
+  filesystem_mirror {
+    path    = "/usr/local/share/terraform/plugins"
+    include = ["registry.terraform.io/pvginkel/*"]
   }
-  direct {}
+  direct {
+    exclude = ["registry.terraform.io/pvginkel/*"]
+  }
 }
 ```
-
-The path must be absolute — Terraform does not expand `~` here.
-
-In CI the same binary is built by the Jenkins pipeline, archived, and baked
-into the `modern-app-dev` image at the same dev-override directory.
 
 Consuming modules then declare:
 
