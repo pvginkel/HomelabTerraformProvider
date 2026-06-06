@@ -80,8 +80,16 @@ podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
                         # the new version + hash from the mirror; bpg/tls are left
                         # untouched. `-fs-mirror` overrides the image's baked
                         # /etc/terraform.rc for this command.
+                        #
+                        # First strip the existing homelab block: `providers lock`
+                        # otherwise honours the previously-selected version pin and
+                        # tries to re-fetch it from the mirror, which only carries
+                        # the new build ("version X is no longer available"). With
+                        # no entry and no version constraint in the config, it
+                        # selects the single version present in the mirror.
                         for scope in prd scratch; do
                             ( cd "ansible/terraform/\$scope"
+                              sed -i '\\%^provider "registry.terraform.io/pvginkel/homelab" {%,\\%^}%d' .terraform.lock.hcl
                               terraform get -no-color
                               terraform providers lock -no-color \
                                   -fs-mirror="\$mirror" \
