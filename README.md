@@ -11,27 +11,37 @@ behind one provider. Built with
 | Go module        | `github.com/pvginkel/HomelabTerraformProvider`     |
 | Resource prefix  | `homelab_`                                         |
 
-The provider is consumed locally via a `dev_overrides` block; nothing is
-published to a registry.
+The provider is consumed via a Terraform `dev_overrides` block; nothing is
+published to a registry. `dev_overrides` bypasses the registry, the version
+constraint, and the consumer's `.terraform.lock.hcl` — a rebuilt binary is
+picked up with no `terraform init` and no lock refresh.
 
-## Install (local dev override)
+## Install
 
-Build the binary in place:
+`scripts/install-local.sh` builds the binary and installs it into the
+dev-override directory (`~/.local/lib/terraform-providers` by default):
 
 ```sh
-go build -o terraform-provider-homelab .
+./scripts/install-local.sh
 ```
 
-Point Terraform at it via `~/.terraformrc` (per-machine, not committed):
+The Terraform CLI config must point a dev override at that directory. The
+`modern-app-dev` image already ships this at `/etc/terraform.rc`
+(`TF_CLI_CONFIG_FILE`); for a bare workstation, put it in `~/.terraformrc`:
 
 ```hcl
 provider_installation {
   dev_overrides {
-    "pvginkel/homelab" = "/work/HomelabTerraformProvider"
+    "pvginkel/homelab" = "/home/youruser/.local/lib/terraform-providers"
   }
   direct {}
 }
 ```
+
+The path must be absolute — Terraform does not expand `~` here.
+
+In CI the same binary is built by the Jenkins pipeline, archived, and baked
+into the `modern-app-dev` image at the same dev-override directory.
 
 Consuming modules then declare:
 
