@@ -7,19 +7,22 @@ podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
     node(POD_LABEL) {
         def version
 
-        stage('Build terraform-provider-homelab') {
+        stage('Cloning repo') {
             dir('HomelabTerraformProvider') {
                 git branch: 'main',
                     credentialsId: '5f6fbd66-b41c-405f-b107-85ba6fd97f10',
                     url: 'https://github.com/pvginkel/HomelabTerraformProvider.git'
+            }
+        }
 
-                // 0.1.<jenkins build>: a fresh version every build, so a
+        stage('Build terraform-provider-homelab') {
+            dir('HomelabTerraformProvider') {
+                // <series>.<jenkins build>: a fresh version every build, so a
                 // consumer never sees the same version with a changed binary
-                // (the mismatch that used to force a manual lock refresh). The
-                // major.minor series comes from version.txt; edit it there to
-                // move the series to 0.2.x.
-                def series = readFile('version.txt').trim().replaceFirst(/\.[^.]+$/, '')
-                version = "${series}.${env.BUILD_NUMBER}"
+                // (the mismatch that used to force a manual lock refresh).
+                // version.txt holds the major.minor series (e.g. 0.1); edit it
+                // to move to 0.2.x.
+                version = "${readFile('version.txt').trim()}.${env.BUILD_NUMBER}"
 
                 container('go') {
                     sh 'git config --global --add safe.directory \'*\''

@@ -4,8 +4,10 @@
 # Jenkins pipeline (same -ldflags, same install path); use this for
 # local iteration when waiting on a Jenkins + image rebuild is too slow.
 #
-# Defaults match the baked image. Override via env vars:
-#   VERSION=0.1.1 ./scripts/install-local.sh
+# version.txt holds only the major.minor series (e.g. 0.1); CI appends the
+# Jenkins build number. For a local build there's no build number, so default
+# to <series>.0. Override the whole thing via env vars:
+#   VERSION=0.1.5 ./scripts/install-local.sh
 #   PLUGIN_ROOT=/some/other/dir ./scripts/install-local.sh
 #
 # `go build` runs as the invoking user; the install steps go through
@@ -15,7 +17,7 @@
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-VERSION="${VERSION:-$(cat "${REPO_DIR}/version.txt")}"
+VERSION="${VERSION:-$(cat "${REPO_DIR}/version.txt").0}"
 PLUGIN_ROOT="${PLUGIN_ROOT:-/usr/local/share/terraform/plugins}"
 GOOS="${GOOS:-linux}"
 GOARCH="${GOARCH:-amd64}"
