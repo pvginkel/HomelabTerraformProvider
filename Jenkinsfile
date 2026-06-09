@@ -27,12 +27,19 @@ podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
                 container('go') {
                     sh 'git config --global --add safe.directory \'*\''
 
+                    // go-ceph is cgo against librados/librbd; the dev headers are
+                    // required to compile. golang:1.25 is Debian-based, so apt
+                    // works. The runtime libs (librados2/librbd1) must be present
+                    // wherever this provider is *applied* — the operator's host
+                    // and the consuming Ansible apply host — not here.
+                    sh 'apt-get update && apt-get install -y --no-install-recommends librados-dev librbd-dev pkg-config build-essential'
+
                     def cacheHit = sh(
                         script: 'scripts/build-cache-get.sh terraform-provider-homelab-go-mod go.sum $HOME/go/pkg/mod',
                         returnStatus: true
                     ) == 0
 
-                    sh "go build -o terraform-provider-homelab -ldflags '-X main.version=${version}'"
+                    sh "CGO_ENABLED=1 go build -o terraform-provider-homelab -ldflags '-X main.version=${version}'"
                     sh 'go version -m terraform-provider-homelab'
 
                     if (!cacheHit) {
