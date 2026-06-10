@@ -38,7 +38,8 @@ Read-only operations (inspecting files, `go build`, `go test` without
 
 ## Conventions
 
-- Small, focused commits with clear messages. Don't batch unrelated work.
+- Commit directly to `main` as you go — no topic branches, no PRs. Make
+  small, focused commits with clear messages. Don't batch unrelated work.
 - Don't ship dormant config "for later" — implement and exercise it now,
   or drop it.
 - Strip scaffolding/walkthrough comments once a file is built. Keep only

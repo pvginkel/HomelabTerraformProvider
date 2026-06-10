@@ -86,6 +86,9 @@ attributes) is rejected as a misconfiguration.
 | `s3_endpoint`           | `HOMELAB_S3_ENDPOINT`            | `homelab_s3_storage`                             |
 | `s3_admin_access_key`   | `HOMELAB_S3_ADMIN_ACCESS_KEY`    | `homelab_s3_storage`                             |
 | `s3_admin_secret_key`   | `HOMELAB_S3_ADMIN_SECRET_KEY`    | `homelab_s3_storage`                             |
+| `zfs_pools`             | —                                | `homelab_zfs_dataset`                            |
+| `zfs_provisioner_token` | `HOMELAB_ZFS_PROVISIONER_TOKEN`  | `homelab_zfs_dataset`                            |
+| `zfs_provisioner_port`  | —                                | `homelab_zfs_dataset`                            |
 
 All token / key / secret attributes are marked sensitive. The typical
 pattern is to leave the provider block empty and supply every value via
@@ -118,6 +121,16 @@ Configuration notes for the Ceph-backed resources:
 
   Supply its `access_key` / `secret_key` as `s3_admin_access_key` /
   `s3_admin_secret_key`.
+
+Configuration notes for the ZFS resource:
+
+- `zfs_pools` maps each ZFS pool name to the hostname of the Kubernetes node
+  that imports it (e.g. `{ zpool2 = "srvk8s2" }`). The provider resolves a
+  dataset's `pool` to that node and addresses its `iac-provisioner` agent over
+  a hostPort; a `pool` with no mapping is a plan-time error. `zfs_pools` and
+  `zfs_provisioner_token` are a pair — setting one without the other is
+  rejected.
+- `zfs_provisioner_port` defaults to `9655` and rarely needs setting.
 
 ## Resources
 
@@ -266,6 +279,46 @@ output "s3_secret_access_key" {
 
 **Import:** `terraform import homelab_s3_storage.example <name>`. The key is
 re-read from RGW; the bucket set is reconciled on the next plan.
+
+### `homelab_zfs_dataset`
+
+A ZFS dataset (`<pool>/<name>`) managed on a Kubernetes node through the
+`iac-provisioner` DaemonSet. The provider resolves `pool` to a node via
+`zfs_pools` and addresses that node's agent directly; the dataset declaration
+never names its host. Property changes are applied with `zfs set` (never a
+destroy); changing `pool` or `name` forces destroy + recreate. **Destroy
+removes the dataset and its data** — guard data-bearing datasets with
+`lifecycle { prevent_destroy = true }` at the call site (the provider has no
+destroy guard of its own). A dataset with children or snapshots refuses to
+destroy.
+
+```hcl
+resource "homelab_zfs_dataset" "paperless" {
+  pool        = "zpool2"
+  name        = "k8s/prd-paperless-data"
+  quota       = "20G"
+  compression = "lz4"
+}
+
+output "mountpoint" {
+  value = homelab_zfs_dataset.paperless.mountpoint_resolved
+}
+```
+
+| Attribute             | Type        | Required | Description                                                                                          |
+|-----------------------|-------------|----------|------------------------------------------------------------------------------------------------------|
+| `pool`                | string      | yes      | ZFS pool name. Must have a `zfs_pools` mapping. **Changing forces destroy + recreate.**              |
+| `name`                | string      | yes      | Dataset path within the pool (e.g. `k8s/prd-paperless-data`). **Changing forces destroy + recreate.**|
+| `quota`               | string      | no       | `zfs` quota (e.g. `20G`). Unset means no quota.                                                       |
+| `recordsize`          | string      | no       | Defaults to `128K`.                                                                                  |
+| `compression`         | string      | no       | Defaults to `lz4`.                                                                                   |
+| `mountpoint`          | string      | no       | Defaults to `/<pool>/<name>`.                                                                        |
+| `properties`          | map(string) | no       | Extra `zfs` properties applied with `zfs set`. Must not repeat the keys above.                       |
+| `guid`                | string      | computed | ZFS dataset GUID. Stable across property changes.                                                    |
+| `mountpoint_resolved` | string      | computed | What `zfs get mountpoint` reports after create. Feeds a static-PV module's `local:` path.            |
+| `id`                  | string      | computed | Equals `<pool>/<name>`.                                                                              |
+
+**Import:** `terraform import homelab_zfs_dataset.example <pool>/<name>`.
 
 ## Development
 

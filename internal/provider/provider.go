@@ -20,6 +20,7 @@ import (
 	"github.com/pvginkel/HomelabTerraformProvider/internal/httplog"
 	"github.com/pvginkel/HomelabTerraformProvider/internal/rbdimage"
 	"github.com/pvginkel/HomelabTerraformProvider/internal/s3storage"
+	"github.com/pvginkel/HomelabTerraformProvider/internal/zfsdataset"
 )
 
 const (
@@ -34,6 +35,9 @@ const (
 	envS3Endpoint  = "HOMELAB_S3_ENDPOINT"
 	envS3AccessKey = "HOMELAB_S3_ADMIN_ACCESS_KEY"
 	envS3SecretKey = "HOMELAB_S3_ADMIN_SECRET_KEY"
+	envZFSToken    = "HOMELAB_ZFS_PROVISIONER_TOKEN"
+
+	defaultZFSProvisionerPort = 9655
 )
 
 var _ provider.Provider = (*HomelabProvider)(nil)
@@ -54,6 +58,10 @@ type homelabProviderModel struct {
 	S3Endpoint  types.String `tfsdk:"s3_endpoint"`
 	S3AccessKey types.String `tfsdk:"s3_admin_access_key"`
 	S3SecretKey types.String `tfsdk:"s3_admin_secret_key"`
+
+	ZFSPools            types.Map    `tfsdk:"zfs_pools"`
+	ZFSProvisionerToken types.String `tfsdk:"zfs_provisioner_token"`
+	ZFSProvisionerPort  types.Int64  `tfsdk:"zfs_provisioner_port"`
 }
 
 // providerClients is the per-resource client bundle handed to every resource
@@ -64,6 +72,7 @@ type providerClients struct {
 	backup *backupcredential.Client
 	ceph   *cephconn.Conn
 	s3     *s3storage.Client
+	zfs    *zfsdataset.Client
 }
 
 func (p *providerClients) DNSReservationClient() *dnsreservation.Client {
@@ -82,12 +91,17 @@ func (p *providerClients) S3StorageClient() *s3storage.Client {
 	return p.s3
 }
 
+func (p *providerClients) ZFSDatasetClient() *zfsdataset.Client {
+	return p.zfs
+}
+
 var (
 	_ dnsreservation.ProviderData   = (*providerClients)(nil)
 	_ backupcredential.ProviderData = (*providerClients)(nil)
 	_ rbdimage.ProviderData         = (*providerClients)(nil)
 	_ cephfssubvolume.ProviderData  = (*providerClients)(nil)
 	_ s3storage.ProviderData        = (*providerClients)(nil)
+	_ zfsdataset.ProviderData       = (*providerClients)(nil)
 )
 
 func New(version string) func() provider.Provider {
@@ -166,6 +180,23 @@ func (p *HomelabProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				Optional:            true,
 				Sensitive:           true,
 			},
+			"zfs_pools": schema.MapAttribute{
+				Description:         "Map of ZFS pool name -> node hostname (.home). The provider resolves a dataset's pool to a node and addresses that node's iac-provisioner agent. Required together with zfs_provisioner_token for the homelab_zfs_dataset resource.",
+				MarkdownDescription: "Map of ZFS pool name -> node hostname (`.home`). The provider resolves a dataset's `pool` to a node and addresses that node's iac-provisioner agent. Required together with `zfs_provisioner_token` for the `homelab_zfs_dataset` resource.",
+				Optional:            true,
+				ElementType:         types.StringType,
+			},
+			"zfs_provisioner_token": schema.StringAttribute{
+				Description:         "Bearer token for the iac-provisioner agents. Falls back to HOMELAB_ZFS_PROVISIONER_TOKEN.",
+				MarkdownDescription: "Bearer token for the iac-provisioner agents. Falls back to `HOMELAB_ZFS_PROVISIONER_TOKEN`.",
+				Optional:            true,
+				Sensitive:           true,
+			},
+			"zfs_provisioner_port": schema.Int64Attribute{
+				Description:         "Port the iac-provisioner agents listen on. Defaults to 9655.",
+				MarkdownDescription: "Port the iac-provisioner agents listen on. Defaults to `9655`.",
+				Optional:            true,
+			},
 		},
 	}
 }
@@ -180,7 +211,8 @@ func (p *HomelabProvider) Configure(ctx context.Context, req provider.ConfigureR
 	// Defer until plan-time when these come from another resource's output.
 	if cfg.DNSURL.IsUnknown() || cfg.DNSToken.IsUnknown() || cfg.BackupURL.IsUnknown() || cfg.BackupToken.IsUnknown() ||
 		cfg.CephMonHost.IsUnknown() || cfg.CephUser.IsUnknown() || cfg.CephKey.IsUnknown() || cfg.CephPool.IsUnknown() ||
-		cfg.S3Endpoint.IsUnknown() || cfg.S3AccessKey.IsUnknown() || cfg.S3SecretKey.IsUnknown() {
+		cfg.S3Endpoint.IsUnknown() || cfg.S3AccessKey.IsUnknown() || cfg.S3SecretKey.IsUnknown() ||
+		cfg.ZFSPools.IsUnknown() || cfg.ZFSProvisionerToken.IsUnknown() || cfg.ZFSProvisionerPort.IsUnknown() {
 		return
 	}
 
@@ -195,6 +227,19 @@ func (p *HomelabProvider) Configure(ctx context.Context, req provider.ConfigureR
 	s3Endpoint := resolveStringConfig(cfg.S3Endpoint, envS3Endpoint)
 	s3AccessKey := resolveStringConfig(cfg.S3AccessKey, envS3AccessKey)
 	s3SecretKey := resolveStringConfig(cfg.S3SecretKey, envS3SecretKey)
+	zfsToken := resolveStringConfig(cfg.ZFSProvisionerToken, envZFSToken)
+
+	zfsPools := map[string]string{}
+	if !cfg.ZFSPools.IsNull() {
+		resp.Diagnostics.Append(cfg.ZFSPools.ElementsAs(ctx, &zfsPools, false)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+	}
+	zfsPort := defaultZFSProvisionerPort
+	if !cfg.ZFSProvisionerPort.IsNull() {
+		zfsPort = int(cfg.ZFSProvisionerPort.ValueInt64())
+	}
 
 	// Half-configured pair is always an error — clearly a misconfiguration,
 	// not "I don't use this service".
@@ -225,6 +270,22 @@ func (p *HomelabProvider) Configure(ctx context.Context, req provider.ConfigureR
 				path.Root("backup_server_token"),
 				"Missing backup_server_token",
 				"backup_server_url is set but backup_server_token is empty. Set both, or unset both, via the provider attributes or "+envBackupURL+"/"+envBackupToken+".",
+			)
+		}
+	}
+	// ZFS provisioner: pools map and token are a pair, like the DNS/backup blocks.
+	if (len(zfsPools) == 0) != (zfsToken == "") {
+		if len(zfsPools) == 0 {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("zfs_pools"),
+				"Missing zfs_pools",
+				"zfs_provisioner_token is set but zfs_pools is empty. Set both, or unset both, via the provider attributes or "+envZFSToken+".",
+			)
+		} else {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("zfs_provisioner_token"),
+				"Missing zfs_provisioner_token",
+				"zfs_pools is set but zfs_provisioner_token is empty. Set both, or unset both, via the provider attributes or "+envZFSToken+".",
 			)
 		}
 	}
@@ -269,6 +330,9 @@ func (p *HomelabProvider) Configure(ctx context.Context, req provider.ConfigureR
 			return
 		}
 		clients.s3 = s3c
+	}
+	if len(zfsPools) > 0 && zfsToken != "" {
+		clients.zfs = zfsdataset.NewClient(zfsPools, zfsToken, zfsPort, p.version)
 	}
 
 	resp.ResourceData = clients
@@ -318,6 +382,7 @@ func (p *HomelabProvider) Resources(_ context.Context) []func() resource.Resourc
 		rbdimage.NewResource,
 		cephfssubvolume.NewResource,
 		s3storage.NewResource,
+		zfsdataset.NewResource,
 	}
 }
 
