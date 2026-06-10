@@ -24,3 +24,4 @@ services:
       - .:/work/HomelabTerraformProvider:rw
       - ../Ansible:/work/Ansible:rw
       - ../DockerImages:/work/DockerImages:rw
+      - ../HelmCharts:/work/HelmCharts:rw
