@@ -29,7 +29,8 @@ Two scripts populate the mirror layout on a box:
 ./scripts/install-local.sh
 
 # fetch the CI-built (released) binary from Jenkins — installs 0.1.<build>
-JENKINS_URL=https://jenkins.home ./scripts/fetch-install.sh
+JENKINS_URL=https://jenkins.home JENKINS_USER=<user> JENKINS_TOKEN=<token> \
+    ./scripts/fetch-install.sh
 ```
 
 Both default to `PLUGIN_ROOT=/usr/local/share/terraform/plugins`. A local

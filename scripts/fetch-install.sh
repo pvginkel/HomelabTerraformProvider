@@ -9,7 +9,7 @@
 #   JOB_PATH       job path under Jenkins
 #                  (default: job/IaC/job/HomelabTerraformProvider)
 #   BUILD          build selector            (default: lastSuccessfulBuild)
-#   JENKINS_USER / JENKINS_TOKEN  basic-auth creds                  (optional)
+#   JENKINS_USER / JENKINS_TOKEN  basic-auth creds                  (required)
 #   PLUGIN_ROOT    mirror root   (default: /usr/local/share/terraform/plugins)
 #
 # The install steps go through sudo when PLUGIN_ROOT isn't writable, skipped
@@ -18,6 +18,8 @@
 set -euo pipefail
 
 : "${JENKINS_URL:?set JENKINS_URL (e.g. https://jenkins.home)}"
+: "${JENKINS_USER:?set JENKINS_USER (Jenkins username)}"
+: "${JENKINS_TOKEN:?set JENKINS_TOKEN (Jenkins API token or password)}"
 JOB_PATH="${JOB_PATH:-job/IaC/job/HomelabTerraformProvider}"
 BUILD="${BUILD:-lastSuccessfulBuild}"
 PLUGIN_ROOT="${PLUGIN_ROOT:-/usr/local/share/terraform/plugins}"
@@ -30,10 +32,7 @@ BIN="terraform-provider-${NAME}"
 
 ART="${JENKINS_URL%/}/${JOB_PATH}/${BUILD}/artifact"
 
-curl_opts=(-fsSL)
-if [[ -n "${JENKINS_USER:-}" && -n "${JENKINS_TOKEN:-}" ]]; then
-    curl_opts+=(-u "${JENKINS_USER}:${JENKINS_TOKEN}")
-fi
+curl_opts=(-fsSL -u "${JENKINS_USER}:${JENKINS_TOKEN}")
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
