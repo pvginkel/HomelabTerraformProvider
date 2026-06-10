@@ -1,3 +1,5 @@
+/tmp
+
 # Go build artifacts
 terraform-provider-homelab
 *.exe
