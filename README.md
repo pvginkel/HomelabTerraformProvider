@@ -88,8 +88,8 @@ attributes) is rejected as a misconfiguration.
 | `s3_admin_access_key`   | `HOMELAB_S3_ADMIN_ACCESS_KEY`    | `homelab_s3_storage`                             |
 | `s3_admin_secret_key`   | `HOMELAB_S3_ADMIN_SECRET_KEY`    | `homelab_s3_storage`                             |
 | `zfs_pools`             | —                                | `homelab_zfs_dataset`                            |
-| `zfs_provisioner_token` | `HOMELAB_ZFS_PROVISIONER_TOKEN`  | `homelab_zfs_dataset`                            |
-| `zfs_provisioner_port`  | —                                | `homelab_zfs_dataset`                            |
+| `iac_provisioner_token` | `HOMELAB_IAC_PROVISIONER_TOKEN`  | `homelab_zfs_dataset`                            |
+| `iac_provisioner_port`  | —                                | `homelab_zfs_dataset`                            |
 
 All token / key / secret attributes are marked sensitive. The typical
 pattern is to leave the provider block empty and supply every value via
@@ -129,9 +129,9 @@ Configuration notes for the ZFS resource:
   that imports it (e.g. `{ zpool2 = "srvk8s2" }`). The provider resolves a
   dataset's `pool` to that node and addresses its `iac-provisioner` agent over
   a hostPort; a `pool` with no mapping is a plan-time error. `zfs_pools` and
-  `zfs_provisioner_token` are a pair — setting one without the other is
+  `iac_provisioner_token` are a pair — setting one without the other is
   rejected.
-- `zfs_provisioner_port` defaults to `9655` and rarely needs setting.
+- `iac_provisioner_port` defaults to `9655` and rarely needs setting.
 
 ## Resources
 

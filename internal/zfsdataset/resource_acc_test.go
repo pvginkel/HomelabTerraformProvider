@@ -15,7 +15,7 @@ import (
 
 // datasetConfig builds a single-resource HCL config. The provider's zfs_pools
 // map points the scratch pool at the test host; the token comes from
-// HOMELAB_ZFS_PROVISIONER_TOKEN via the env fallback.
+// HOMELAB_IAC_PROVISIONER_TOKEN via the env fallback.
 func datasetConfig(pool, host, name, compression string) string {
 	return fmt.Sprintf(`
 provider "homelab" {

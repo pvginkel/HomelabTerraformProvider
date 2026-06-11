@@ -152,8 +152,8 @@ func (r *zfsDatasetResource) Configure(_ context.Context, req resource.Configure
 	if client == nil {
 		resp.Diagnostics.AddError(
 			"ZFS provisioner not configured",
-			"homelab_zfs_dataset requires zfs_pools and zfs_provisioner_token to be set on the provider block, "+
-				"or HOMELAB_ZFS_PROVISIONER_TOKEN in the environment.",
+			"homelab_zfs_dataset requires zfs_pools and iac_provisioner_token to be set on the provider block, "+
+				"or HOMELAB_IAC_PROVISIONER_TOKEN in the environment.",
 		)
 		return
 	}
