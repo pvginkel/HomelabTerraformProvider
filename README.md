@@ -69,10 +69,19 @@ provider "homelab" {}
 ## Provider configuration
 
 The provider talks to several independent backends, each configured by a
-group of attributes with environment-variable fallbacks. A whole group may
-be left unset — only the resources that use it will fail. Setting a proper
-subset of a group (e.g. a URL without its token, or three of the four Ceph
-attributes) is rejected as a misconfiguration.
+group of attributes with environment-variable fallbacks. Each group has a
+single **trigger** attribute that decides whether the group is active:
+
+- If the trigger is empty, the whole group is disabled — its other members
+  are ignored even when their env vars happen to be set in the environment.
+  Only resources that use the group will fail. This lets the provider share
+  an environment where unrelated `HOMELAB_*` vars are present.
+- If the trigger is set, every other member of the group becomes mandatory;
+  a missing one is rejected as a misconfiguration.
+
+The trigger of each group is its first attribute in the table below:
+`dns_reservation_url`, `backup_server_url`, `ceph_mon_host`, `s3_endpoint`,
+and `zfs_pools`.
 
 | Attribute               | Env var                          | Used by                                          |
 |-------------------------|----------------------------------|--------------------------------------------------|

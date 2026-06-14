@@ -241,56 +241,26 @@ func (p *HomelabProvider) Configure(ctx context.Context, req provider.ConfigureR
 		iacPort = int(cfg.IACProvisionerPort.ValueInt64())
 	}
 
-	// Half-configured pair is always an error — clearly a misconfiguration,
-	// not "I don't use this service".
-	if (dnsURL == "") != (dnsToken == "") {
-		if dnsURL == "" {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("dns_reservation_url"),
-				"Missing dns_reservation_url",
-				"dns_reservation_token is set but dns_reservation_url is empty. Set both, or unset both, via the provider attributes or "+envDNSURL+"/"+envDNSToken+".",
-			)
-		} else {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("dns_reservation_token"),
-				"Missing dns_reservation_token",
-				"dns_reservation_url is set but dns_reservation_token is empty. Set both, or unset both, via the provider attributes or "+envDNSURL+"/"+envDNSToken+".",
-			)
-		}
+	// Every group is gated by its first (trigger) field: an empty trigger means
+	// "I don't use this service" and the rest of the group is ignored even when
+	// its env vars happen to be set. A set trigger makes the remaining members
+	// mandatory.
+	zfsPoolsTrigger := ""
+	if len(zfsPools) > 0 {
+		zfsPoolsTrigger = "set"
 	}
-	if (backupURL == "") != (backupToken == "") {
-		if backupURL == "" {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("backup_server_url"),
-				"Missing backup_server_url",
-				"backup_server_token is set but backup_server_url is empty. Set both, or unset both, via the provider attributes or "+envBackupURL+"/"+envBackupToken+".",
-			)
-		} else {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("backup_server_token"),
-				"Missing backup_server_token",
-				"backup_server_url is set but backup_server_token is empty. Set both, or unset both, via the provider attributes or "+envBackupURL+"/"+envBackupToken+".",
-			)
-		}
-	}
-	// ZFS provisioner: pools map and token are a pair, like the DNS/backup blocks.
-	if (len(zfsPools) == 0) != (iacToken == "") {
-		if len(zfsPools) == 0 {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("zfs_pools"),
-				"Missing zfs_pools",
-				"iac_provisioner_token is set but zfs_pools is empty. Set both, or unset both, via the provider attributes or "+envIACToken+".",
-			)
-		} else {
-			resp.Diagnostics.AddAttributeError(
-				path.Root("iac_provisioner_token"),
-				"Missing iac_provisioner_token",
-				"zfs_pools is set but iac_provisioner_token is empty. Set both, or unset both, via the provider attributes or "+envIACToken+".",
-			)
-		}
-	}
-	// Ceph and S3 are all-or-nothing groups: a partially-set group is a
-	// misconfiguration, an entirely-unset group means "I don't use it".
+	dnsSet := validateGroup(&resp.Diagnostics, []groupField{
+		{path: "dns_reservation_url", env: envDNSURL, value: dnsURL},
+		{path: "dns_reservation_token", env: envDNSToken, value: dnsToken},
+	})
+	backupSet := validateGroup(&resp.Diagnostics, []groupField{
+		{path: "backup_server_url", env: envBackupURL, value: backupURL},
+		{path: "backup_server_token", env: envBackupToken, value: backupToken},
+	})
+	zfsSet := validateGroup(&resp.Diagnostics, []groupField{
+		{path: "zfs_pools", env: "", value: zfsPoolsTrigger},
+		{path: "iac_provisioner_token", env: envIACToken, value: iacToken},
+	})
 	cephSet := validateGroup(&resp.Diagnostics, []groupField{
 		{path: "ceph_mon_host", env: envCephMonHost, value: cephMonHost},
 		{path: "ceph_user", env: envCephUser, value: cephUser},
@@ -309,10 +279,10 @@ func (p *HomelabProvider) Configure(ctx context.Context, req provider.ConfigureR
 	ctx = httplog.Register(ctx)
 
 	clients := &providerClients{}
-	if dnsURL != "" && dnsToken != "" {
+	if dnsSet {
 		clients.dns = dnsreservation.NewClient(dnsURL, dnsToken, p.version)
 	}
-	if backupURL != "" && backupToken != "" {
+	if backupSet {
 		clients.backup = backupcredential.NewClient(backupURL, backupToken, p.version)
 	}
 	if cephSet {
@@ -331,7 +301,7 @@ func (p *HomelabProvider) Configure(ctx context.Context, req provider.ConfigureR
 		}
 		clients.s3 = s3c
 	}
-	if len(zfsPools) > 0 && iacToken != "" {
+	if zfsSet {
 		clients.zfs = zfsdataset.NewClient(zfsPools, iacToken, iacPort, p.version)
 	}
 
@@ -339,40 +309,36 @@ func (p *HomelabProvider) Configure(ctx context.Context, req provider.ConfigureR
 	resp.DataSourceData = clients
 }
 
-// groupField is one member of an all-or-nothing provider config group.
+// groupField is one member of a provider config group. The first field of a
+// group is its trigger.
 type groupField struct {
 	path  string
 	env   string
 	value string
 }
 
-// validateGroup reports whether the group is fully set. If a non-empty proper
-// subset is set, it raises an attribute error on each missing member and
-// returns false.
+// validateGroup reports whether the group is enabled. The first field is the
+// trigger: if it is empty the whole group is disabled and the remaining members
+// are ignored — even if their env vars happen to be set in the environment. If
+// the trigger is set, every other member is mandatory and a missing one raises
+// an attribute error.
 func validateGroup(diags *diag.Diagnostics, fields []groupField) bool {
-	setCount := 0
-	for _, f := range fields {
-		if f.value != "" {
-			setCount++
-		}
-	}
-	if setCount == 0 {
+	if fields[0].value == "" {
 		return false
 	}
-	if setCount == len(fields) {
-		return true
-	}
-	for _, f := range fields {
+	enabled := true
+	for _, f := range fields[1:] {
 		if f.value == "" {
+			enabled = false
 			diags.AddAttributeError(
 				path.Root(f.path),
 				"Incomplete provider configuration group",
-				"This attribute group must be set together. "+f.path+" is empty while others in its group are set. "+
-					"Set it via the provider attribute or "+f.env+", or unset the whole group.",
+				f.path+" is required when "+fields[0].path+" is set. "+
+					"Set it via the provider attribute or "+f.env+", or unset "+fields[0].path+" to disable the group.",
 			)
 		}
 	}
-	return false
+	return enabled
 }
 
 func (p *HomelabProvider) Resources(_ context.Context) []func() resource.Resource {

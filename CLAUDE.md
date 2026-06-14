@@ -50,3 +50,10 @@ Read-only operations (inspecting files, `go build`, `go test` without
   acceptance-test pair. The provider wires the per-resource client via a
   package-local `ProviderData` interface so the resource package stays
   independent of `internal/provider`.
+- Provider config groups are trigger-gated, not all-or-nothing. Each group
+  has one trigger attribute (e.g. `ceph_mon_host`, `s3_endpoint`,
+  `zfs_pools`): empty trigger disables the whole group and its other members
+  (and their env-var fallbacks) are ignored; a set trigger makes the rest
+  mandatory. This keeps the provider usable in a shared environment where
+  unrelated `HOMELAB_*` vars are set for it. See `validateGroup` in
+  `internal/provider/provider.go`.
