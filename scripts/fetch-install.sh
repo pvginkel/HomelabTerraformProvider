@@ -17,8 +17,8 @@
 
 set -euo pipefail
 
-: "${JENKINS_URL:?set JENKINS_URL (e.g. https://jenkins.home)}"
-: "${JENKINS_USER:?set JENKINS_USER (Jenkins username)}"
+JENKINS_URL="${JENKINS_URL:-https://jenkins.webathome.org}"
+JENKINS_USER="${JENKINS_USER:-admin}"
 : "${JENKINS_TOKEN:?set JENKINS_TOKEN (Jenkins API token or password)}"
 JOB_PATH="${JOB_PATH:-job/IaC/job/HomelabTerraformProvider}"
 BUILD="${BUILD:-lastSuccessfulBuild}"
@@ -48,7 +48,8 @@ VERSION="$(jq -r .version "${tmp}/metadata.json")"
 echo "==> fetching ${BIN} v${VERSION}"
 curl "${curl_opts[@]}" -o "${tmp}/${BIN}" "${ART}/${BIN}"
 
-DEST_DIR="${PLUGIN_ROOT}/registry.terraform.io/${NAMESPACE}/${NAME}/${VERSION}/${GOOS}_${GOARCH}"
+NAME_DIR="${PLUGIN_ROOT}/registry.terraform.io/${NAMESPACE}/${NAME}"
+DEST_DIR="${NAME_DIR}/${VERSION}/${GOOS}_${GOARCH}"
 DEST_BIN="${DEST_DIR}/${BIN}_v${VERSION}"
 
 SUDO=()
@@ -65,8 +66,19 @@ echo "==> install -> ${DEST_BIN}"
 "${SUDO[@]}" install -d -m 0755 "$DEST_DIR"
 "${SUDO[@]}" install -m 0755 "${tmp}/${BIN}" "${DEST_BIN}"
 
+# Keep only the version just installed: the mirror is a single-version
+# source of truth, so a lingering old build can never be silently honored
+# by a consumer's lock.
+while IFS= read -r d; do
+    v="$(basename "$d")"
+    [[ "$v" == "$VERSION" ]] && continue
+    echo "==> pruning old version v${v}"
+    "${SUDO[@]}" rm -rf "$d"
+done < <(find "$NAME_DIR" -mindepth 1 -maxdepth 1 -type d)
+
 echo "==> done (v${VERSION})"
 echo
-echo "If a consumer's .terraform.lock.hcl pins a different version, run"
-echo "'terraform init -upgrade' there. CI normally keeps the Ansible lock in"
-echo "sync, so this is only needed for ad-hoc consumers."
+echo "Old versions are pruned, so a consumer whose .terraform.lock.hcl pins a"
+echo "different version must re-resolve: run 'terraform init -upgrade' there."
+echo "CI normally keeps the Ansible lock in sync, so this is only needed for"
+echo "ad-hoc consumers."
