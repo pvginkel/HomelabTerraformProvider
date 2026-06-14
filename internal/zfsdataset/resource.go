@@ -11,7 +11,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 )
@@ -92,14 +91,12 @@ func (r *zfsDatasetResource) Schema(_ context.Context, _ resource.SchemaRequest,
 				MarkdownDescription: "ZFS recordsize. Defaults to `128K`.",
 				Optional:            true,
 				Computed:            true,
-				Default:             stringdefault.StaticString("128K"),
 			},
 			"compression": schema.StringAttribute{
 				Description:         "ZFS compression. Defaults to lz4.",
 				MarkdownDescription: "ZFS compression. Defaults to `lz4`.",
 				Optional:            true,
 				Computed:            true,
-				Default:             stringdefault.StaticString("lz4"),
 			},
 			"mountpoint": schema.StringAttribute{
 				Description:         "Dataset mountpoint. Defaults to /<pool>/<name>.",
