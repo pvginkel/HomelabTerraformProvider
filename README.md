@@ -20,6 +20,15 @@ in those images points Terraform there, so `terraform init` resolves
 version, the CI job also rewrites the consumer's `.terraform.lock.hcl` (in the
 Ansible repo) to match — no manual `terraform init -upgrade`.
 
+**In transition to a network mirror.** Each build now *also* publishes the
+version to a private **Provider Network Mirror** (the `TerraformRegistry`
+repo → nginx image → HelmCharts release at `tfmirror.home`) via the
+`Publish to provider registry` stage and `scripts/registry-publish.sh`. The
+two paths run side by side: once consumers are switched to the network
+mirror (a `network_mirror` block in their CLI config), the filesystem-mirror
+bake and the Ansible-lock rewrite below are removed and the registry becomes
+the only delivery. See `AnsibleSpecs/slices/tf-provider-registry.md`.
+
 ## Install
 
 Two scripts populate the mirror layout on a box:

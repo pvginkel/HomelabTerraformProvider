@@ -53,6 +53,52 @@ podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
             }
         }
 
+        // Append this build to the Provider Network Mirror (the dedicated
+        // TerraformRegistry repo's dist/ tree) and push. That push triggers
+        // the registry's pipeline, which rebuilds the nginx image and lets
+        // HelmCharts redeploy it at tfmirror.home. registry-publish.sh zips
+        // the binary, has terraform compute the h1 hash off a throwaway
+        // filesystem mirror, writes the index.json/<version>.json, and
+        // prunes to the newest KEEP versions. Runs in `tf` (modern-app-dev:
+        // ships terraform + python3). Additive and idempotent — it never
+        // mutates a version a consumer's lock still pins.
+        //
+        // Runs alongside the legacy filesystem-mirror path below until the
+        // consumers are switched to the network mirror; once that lands, the
+        // Ansible-lock and Docker-image-bake stages go away and this is the
+        // only delivery.
+        stage('Publish to provider registry') {
+            container('tf') {
+                withCredentials([usernamePassword(
+                    credentialsId: '5f6fbd66-b41c-405f-b107-85ba6fd97f10',
+                    usernameVariable: 'GIT_USER',
+                    passwordVariable: 'GIT_TOKEN')]) {
+                    sh """
+                        set -euo pipefail
+                        git config --global --add safe.directory '*'
+
+                        bin="\$PWD/HomelabTerraformProvider/terraform-provider-homelab"
+
+                        git clone --depth 1 \
+                            "https://\${GIT_USER}:\${GIT_TOKEN}@github.com/pvginkel/TerraformRegistry.git" registry
+                        git -C registry config user.name  'jenkins'
+                        git -C registry config user.email 'jenkins@webathome.org'
+
+                        BIN="\$bin" VERSION="${version}" DIST="\$PWD/registry/dist" KEEP=10 \
+                            HomelabTerraformProvider/scripts/registry-publish.sh
+
+                        git -C registry add -A dist
+                        if git -C registry diff --cached --quiet; then
+                            echo 'registry already current; nothing to push'
+                        else
+                            git -C registry commit -m 'ci: publish pvginkel/homelab ${version}'
+                            git -C registry push origin HEAD:main
+                        fi
+                    """
+                }
+            }
+        }
+
         // The consuming Ansible repo pins pvginkel/homelab in its
         // terraform/{prd,scratch}/.terraform.lock.hcl. Each build mints a new
         // version, so that lock would otherwise drift; regenerate it from the
