@@ -31,14 +31,16 @@ projects:
     build: cexec go go build ./...
 
     # -p 1 is a workaround for the `go` catalog toolchain's 1Gi memory limit,
-    # not a preference. Seven of the eight test binaries link against go-ceph's
-    # cgo; the sidecar idles at ~236Mi and one such link adds ~550Mi. At Go's
-    # default parallelism (8, the sidecar's core count) the container is
-    # OOMKilled mid-link — reproducibly, exit 137 — which also wipes the
-    # librados-dev/librbd-dev packages noted above, so the failure looks like a
-    # broken toolchain on the next run. Serialised it peaks at ~790Mi of the
-    # 1Gi and passes in seconds. Drop the flag when the toolchain's limit is
-    # raised in the catalog; the limit is not settable from this repo.
+    # not a preference. Six of the seven test binaries link against go-ceph's
+    # cgo — every package but internal/quantity, because each resource's
+    # acc_helpers_test.go pulls in internal/provider, which pulls in cephconn.
+    # At Go's default parallelism (8, the sidecar's core count) the container
+    # is OOMKilled mid-link — reproducibly, exit 137 — which also wipes the
+    # librados-dev/librbd-dev packages noted above, so the failure surfaces on
+    # the *next* run as a broken toolchain instead. Serialised, the same run
+    # peaks at ~790Mi against a ~240Mi idle footprint and passes in seconds.
+    # Drop the flag when the toolchain's limit is raised; that limit lives on
+    # the catalog entry and is not settable from this repo.
     #
     # Acceptance tests need no gating here: every *_acc_test.go goes through
     # terraform-plugin-testing's resource.Test, which skips unless TF_ACC is
