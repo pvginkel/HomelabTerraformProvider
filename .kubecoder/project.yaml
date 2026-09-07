@@ -1,0 +1,53 @@
+projects:
+  root:
+    description: >-
+      The homelab Terraform provider (source address pvginkel/homelab, binary
+      terraform-provider-homelab): one Go module whose resources front the
+      homelab's own backends — DNS reservations, Ceph RBD images and CephFS
+      subvolumes, ZFS datasets, S3 buckets and backup-server credentials.
+      Jenkins builds every main commit and appends it to the provider network
+      mirror the estate's Terraform consumes.
+    # One component, not several: this is a single Go module with one build
+    # and one `go test ./...` covering every internal/ package, so per-package
+    # components would only make `kc project test` run the same suite N times.
+    jenkins: IaC/HomelabTerraformProvider
+
+    # The go module cache is a home overlay the `go` toolchain contributes, so
+    # this is a no-op after the first pod start — but it is what makes a fresh
+    # clone buildable, and it is idempotent.
+    #
+    # Deliberately NOT installing librados-dev/librbd-dev here: the packages
+    # this repo's cgo needs are apt-installed into the `go` sidecar by the
+    # environment host's own setup (Ansible's .kubecoder/project.yaml). They
+    # live in the sidecar's container filesystem, so any sidecar restart drops
+    # them; `kc project setup` in /work/Ansible puts them back.
+    setup: cexec go go mod download
+
+    # `go build ./...` compiles every package but links nothing — Go discards
+    # the objects when more than one package is named — so a green build proves
+    # the librados/librbd *headers* are present and says nothing about the
+    # shared libraries. The link step is exercised by `test:` below, which is
+    # where a missing -lrados/-lrbd actually surfaces.
+    build: cexec go go build ./...
+
+    # -p 1 is a workaround for the `go` catalog toolchain's 1Gi memory limit,
+    # not a preference. Seven of the eight test binaries link against go-ceph's
+    # cgo; the sidecar idles at ~236Mi and one such link adds ~550Mi. At Go's
+    # default parallelism (8, the sidecar's core count) the container is
+    # OOMKilled mid-link — reproducibly, exit 137 — which also wipes the
+    # librados-dev/librbd-dev packages noted above, so the failure looks like a
+    # broken toolchain on the next run. Serialised it peaks at ~790Mi of the
+    # 1Gi and passes in seconds. Drop the flag when the toolchain's limit is
+    # raised in the catalog; the limit is not settable from this repo.
+    #
+    # Acceptance tests need no gating here: every *_acc_test.go goes through
+    # terraform-plugin-testing's resource.Test, which skips unless TF_ACC is
+    # set, and no TestMain or init() touches the network. This verb therefore
+    # reaches no real infrastructure.
+    test: cexec go go test -p 1 ./...
+
+    # `go vet` because CI runs no linter at all — the Jenkinsfile's build stage
+    # is `go build` plus `go version -m` — and the repo carries no
+    # golangci-lint config. The `go` sidecar does ship golangci-lint; adopting
+    # it, and with which rule set, is a repo decision nobody has taken.
+    lint: cexec go go vet ./...
