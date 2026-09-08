@@ -30,23 +30,11 @@ projects:
     # where a missing -lrados/-lrbd actually surfaces.
     build: cexec go go build ./...
 
-    # -p 1 is a workaround for the `go` catalog toolchain's 1Gi memory limit,
-    # not a preference. Six of the seven test binaries link against go-ceph's
-    # cgo — every package but internal/quantity, because each resource's
-    # acc_helpers_test.go pulls in internal/provider, which pulls in cephconn.
-    # At Go's default parallelism (8, the sidecar's core count) the container
-    # is OOMKilled mid-link — reproducibly, exit 137 — which also wipes the
-    # librados-dev/librbd-dev packages noted above, so the failure surfaces on
-    # the *next* run as a broken toolchain instead. Serialised, the same run
-    # peaks at ~790Mi against a ~240Mi idle footprint and passes in seconds.
-    # Drop the flag when the toolchain's limit is raised; that limit lives on
-    # the catalog entry and is not settable from this repo.
-    #
     # Acceptance tests need no gating here: every *_acc_test.go goes through
     # terraform-plugin-testing's resource.Test, which skips unless TF_ACC is
     # set, and no TestMain or init() touches the network. This verb therefore
     # reaches no real infrastructure.
-    test: cexec go go test -p 1 ./...
+    test: cexec go go test ./...
 
     # `go vet` because CI runs no linter at all — the Jenkinsfile's build stage
     # is `go build` plus `go version -m` — and the repo carries no
