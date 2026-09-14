@@ -101,7 +101,8 @@ single **trigger** attribute that decides whether the group is active:
   Only resources that use the group will fail. This lets the provider share
   an environment where unrelated `HOMELAB_*` vars are present.
 - If the trigger is set, every other member of the group becomes mandatory;
-  a missing one is rejected as a misconfiguration.
+  a missing one is rejected as a misconfiguration. The one exception is
+  `s3_backup_reader`, which stays optional.
 
 The trigger of each group is its first attribute in the table below:
 `dns_reservation_url`, `backup_server_url`, `ceph_mon_host`, `s3_endpoint`,
@@ -117,9 +118,10 @@ and `zfs_pools`.
 | `ceph_user`             | `HOMELAB_CEPH_USER`              | `homelab_rbd_image`, `homelab_cephfs_subvolume`  |
 | `ceph_key`              | `HOMELAB_CEPH_KEY`               | `homelab_rbd_image`, `homelab_cephfs_subvolume`  |
 | `ceph_pool`             | `HOMELAB_CEPH_POOL`              | `homelab_rbd_image`, `homelab_cephfs_subvolume`  |
-| `s3_endpoint`           | `HOMELAB_S3_ENDPOINT`            | `homelab_s3_storage`                             |
-| `s3_admin_access_key`   | `HOMELAB_S3_ADMIN_ACCESS_KEY`    | `homelab_s3_storage`                             |
-| `s3_admin_secret_key`   | `HOMELAB_S3_ADMIN_SECRET_KEY`    | `homelab_s3_storage`                             |
+| `s3_endpoint`           | `HOMELAB_S3_ENDPOINT`            | `homelab_s3_storage`, `homelab_s3_reader`        |
+| `s3_admin_access_key`   | `HOMELAB_S3_ADMIN_ACCESS_KEY`    | `homelab_s3_storage`, `homelab_s3_reader`        |
+| `s3_admin_secret_key`   | `HOMELAB_S3_ADMIN_SECRET_KEY`    | `homelab_s3_storage`, `homelab_s3_reader`        |
+| `s3_backup_reader`      | `HOMELAB_S3_BACKUP_READER`       | `homelab_s3_storage` (`grant_backup_reader`)     |
 | `zfs_pools`             | —                                | `homelab_zfs_dataset`                            |
 | `iac_provisioner_token` | `HOMELAB_IAC_PROVISIONER_TOKEN`  | `homelab_zfs_dataset`                            |
 | `iac_provisioner_port`  | —                                | `homelab_zfs_dataset`                            |
@@ -145,8 +147,8 @@ Configuration notes for the Ceph-backed resources:
   host that runs `terraform apply` with these resources must have those
   packages installed. (The build host additionally needs the `-dev` headers;
   see [Development](#development).)
-- `homelab_s3_storage` authenticates to the RGW Admin Ops API as an admin user
-  that must exist with caps `users=*;buckets=*`:
+- `homelab_s3_storage` and `homelab_s3_reader` authenticate to the RGW Admin
+  Ops API as an admin user that must exist with caps `users=*;buckets=*`:
 
   ```sh
   radosgw-admin user create --uid=tf-provider --display-name="TF provider admin" \
@@ -155,6 +157,11 @@ Configuration notes for the Ceph-backed resources:
 
   Supply its `access_key` / `secret_key` as `s3_admin_access_key` /
   `s3_admin_secret_key`.
+- `s3_backup_reader` is the RGW user id that `homelab_s3_storage`'s
+  `grant_backup_reader` names in its bucket policies, normally a
+  `homelab_s3_reader`'s `name`. Unset, `grant_backup_reader` writes, deletes
+  and checks nothing, so a module can ask for the grant on every cluster and
+  only a provider that names a reader acts on it.
 
 Configuration notes for the ZFS resource:
 
@@ -283,6 +290,19 @@ it; removing one **deletes that bucket and all its objects**. Changing
 and objects intact. **Destroy purges every bucket (objects included) and
 removes the user.**
 
+With `grant_backup_reader = true`, every bucket also carries a bucket policy
+that lets the provider's `s3_backup_reader` user list the bucket
+(`s3:ListBucket`) and get its objects (`s3:GetObject`), and nothing more.
+That policy is the bucket's whole policy: the grant replaces any policy the
+bucket had. RGW takes a bucket policy only from the bucket's owner, so the
+provider writes it over S3 with the per-release user's key (the new key, after
+a rotation). Refresh compares each bucket's policy with the grant; a missing or
+different one is drift, and the next apply writes it again in place. Dropping
+the grant (unset, or `false` after `true`) deletes every bucket's policy. Leave
+it unset rather than `false` where no grant is wanted: a state from before the
+attribute holds `null`, so `false` plans an in-place update. On a provider with
+no `s3_backup_reader`, the attribute writes, deletes and checks nothing.
+
 ```hcl
 resource "homelab_s3_storage" "app" {
   name    = "release-app"
@@ -290,6 +310,9 @@ resource "homelab_s3_storage" "app" {
 
   # Bump to rotate the access key without touching buckets.
   key_rotation = "1"
+
+  # Let the provider's s3_backup_reader list and read every bucket.
+  grant_backup_reader = true
 }
 
 output "s3_access_key_id" {
@@ -307,12 +330,46 @@ output "s3_secret_access_key" {
 | `name`              | string      | yes      | RGW user id and logical name. **Changing forces destroy + recreate.**                               |
 | `buckets`           | set(string) | yes      | Buckets owned by this credential. Removing a bucket deletes it **and all its objects**.             |
 | `key_rotation`      | string      | no       | Opaque rotation trigger. Changing it regenerates the access key; buckets and objects are untouched. |
+| `grant_backup_reader` | bool      | no       | When `true`, each bucket's whole policy lets the provider's `s3_backup_reader` list it and get its objects. Dropping it deletes the policies. Inert with no reader configured. |
 | `access_key_id`     | string      | computed | Minted S3 access key id.                                                                            |
 | `secret_access_key` | string      | computed | Minted S3 secret access key. Sensitive.                                                             |
 | `id`                | string      | computed | Equals `name`.                                                                                      |
 
 **Import:** `terraform import homelab_s3_storage.example <name>`. The key is
 re-read from RGW; the bucket set is reconciled on the next plan.
+
+### `homelab_s3_reader`
+
+An RGW user that owns no buckets and can create none (`max_buckets = -1`). It
+holds one admin capability, `buckets=read`, for enumerating buckets through the
+Admin Ops API — S3 `ListBuckets` returns only the caller's own buckets. Object
+access comes from `homelab_s3_storage`'s `grant_backup_reader`, on a provider
+whose `s3_backup_reader` is this resource's `name`. The key is minted on
+create, and there is no rotation trigger. Refresh tracks only that the user
+exists and its key; the capability and `max_buckets` are set on create and not
+checked afterwards. Renaming forces destroy + recreate. **Destroy removes the
+user.**
+
+```hcl
+resource "homelab_s3_reader" "backup_reader" {
+  name = "backup-reader"
+}
+
+output "reader_secret_access_key" {
+  value     = homelab_s3_reader.backup_reader.secret_access_key
+  sensitive = true
+}
+```
+
+| Attribute           | Type   | Required | Description                                             |
+|---------------------|--------|----------|---------------------------------------------------------|
+| `name`              | string | yes      | RGW user id. **Changing forces destroy + recreate.**    |
+| `access_key_id`     | string | computed | Minted S3 access key id.                                |
+| `secret_access_key` | string | computed | Minted S3 secret access key. Sensitive.                 |
+| `id`                | string | computed | Equals `name`.                                          |
+
+**Import:** `terraform import homelab_s3_reader.example <name>`. The key is
+re-read from RGW.
 
 ### `homelab_zfs_dataset`
 
@@ -390,9 +447,10 @@ TF_ACC=1 \
   HOMELAB_CEPH_MON_HOST=... HOMELAB_CEPH_USER=... HOMELAB_CEPH_KEY=... HOMELAB_CEPH_POOL=... \
   CGO_ENABLED=1 go test -v ./internal/rbdimage/ ./internal/cephfssubvolume/
 
+# The grant test creates its own reader and names it in its provider block.
 TF_ACC=1 \
   HOMELAB_S3_ENDPOINT=... HOMELAB_S3_ADMIN_ACCESS_KEY=... HOMELAB_S3_ADMIN_SECRET_KEY=... \
-  go test -v ./internal/s3storage/
+  go test -v ./internal/s3storage/ ./internal/s3reader/
 ```
 
 To see redacted HTTP request/response logs from the provider:

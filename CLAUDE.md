@@ -64,6 +64,7 @@ suite touches no live backend.
   has one trigger attribute (e.g. `ceph_mon_host`, `s3_endpoint`,
   `zfs_pools`): empty trigger disables the whole group and its other members
   (and their env-var fallbacks) are ignored; a set trigger makes the rest
-  mandatory. This keeps the provider usable in a shared environment where
-  unrelated `HOMELAB_*` vars are set for it. See `validateGroup` in
+  mandatory, except `s3_backup_reader`, the s3 group's one optional member
+  (kept out of `validateGroup`). This keeps the provider usable in a shared
+  environment where unrelated `HOMELAB_*` vars are set for it. See `validateGroup` in
   `internal/provider/provider.go`.
