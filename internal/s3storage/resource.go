@@ -34,12 +34,13 @@ type s3StorageResource struct {
 }
 
 type s3StorageModel struct {
-	ID              types.String `tfsdk:"id"`
-	Name            types.String `tfsdk:"name"`
-	Buckets         types.Set    `tfsdk:"buckets"`
-	KeyRotation     types.String `tfsdk:"key_rotation"`
-	AccessKeyID     types.String `tfsdk:"access_key_id"`
-	SecretAccessKey types.String `tfsdk:"secret_access_key"`
+	ID                types.String `tfsdk:"id"`
+	Name              types.String `tfsdk:"name"`
+	Buckets           types.Set    `tfsdk:"buckets"`
+	KeyRotation       types.String `tfsdk:"key_rotation"`
+	GrantBackupReader types.Bool   `tfsdk:"grant_backup_reader"`
+	AccessKeyID       types.String `tfsdk:"access_key_id"`
+	SecretAccessKey   types.String `tfsdk:"secret_access_key"`
 }
 
 func (r *s3StorageResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -77,6 +78,15 @@ func (r *s3StorageResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Description:         "Opaque rotation trigger. Changing this value regenerates the access key on the same user; buckets and objects are untouched.",
 				MarkdownDescription: "Opaque rotation trigger. Changing this value regenerates the access key on the same user; buckets and objects are untouched.",
 				Optional:            true,
+			},
+			"grant_backup_reader": schema.BoolAttribute{
+				Description: "When true, every bucket carries a bucket policy letting the provider's s3_backup_reader user list it and get its objects, and nothing more; " +
+					"the provider owns each bucket's whole policy. A policy removed out of band shows as drift. Unsetting it deletes the policies. " +
+					"On a provider with no s3_backup_reader it writes, deletes and checks nothing.",
+				MarkdownDescription: "When `true`, every bucket carries a bucket policy letting the provider's `s3_backup_reader` user list it and get its objects, and nothing more; " +
+					"the provider owns each bucket's whole policy. A policy removed out of band shows as drift. Unsetting it deletes the policies. " +
+					"On a provider with no `s3_backup_reader` it writes, deletes and checks nothing.",
+				Optional: true,
 			},
 			"access_key_id": schema.StringAttribute{
 				Description:         "Minted S3 access key id for this allocation.",
@@ -162,6 +172,13 @@ func (r *s3StorageResource) Create(ctx context.Context, req resource.CreateReque
 		return
 	}
 
+	if plan.GrantBackupReader.ValueBool() && r.client.HasReader() {
+		if err := r.client.GrantReader(ctx, st.AccessKeyID, st.SecretAccessKey, buckets); err != nil {
+			resp.Diagnostics.AddError("Failed to grant the backup reader", err.Error())
+			return
+		}
+	}
+
 	plan.ID = types.StringValue(st.Name)
 	plan.AccessKeyID = types.StringValue(st.AccessKeyID)
 	plan.SecretAccessKey = types.StringValue(st.SecretAccessKey)
@@ -200,6 +217,19 @@ func (r *s3StorageResource) Read(ctx context.Context, req resource.ReadRequest, 
 	}
 	state.Buckets = bucketSet
 
+	// A bucket missing the grant records the ask as unmet, so the next plan
+	// updates in place and writes the policy again.
+	if state.GrantBackupReader.ValueBool() && r.client.HasReader() {
+		granted, err := r.client.ReaderGranted(ctx, st.AccessKeyID, st.SecretAccessKey, st.Buckets)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to read S3 bucket policies", err.Error())
+			return
+		}
+		if !granted {
+			state.GrantBackupReader = types.BoolValue(false)
+		}
+	}
+
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -237,6 +267,21 @@ func (r *s3StorageResource) Update(ctx context.Context, req resource.UpdateReque
 			return
 		}
 		access, secret = newAccess, newSecret
+	}
+
+	if r.client.HasReader() {
+		switch {
+		case plan.GrantBackupReader.ValueBool():
+			if err := r.client.GrantReader(ctx, access, secret, planBuckets); err != nil {
+				resp.Diagnostics.AddError("Failed to grant the backup reader", err.Error())
+				return
+			}
+		case !state.GrantBackupReader.IsNull():
+			if err := r.client.RevokeReader(ctx, access, secret, planBuckets); err != nil {
+				resp.Diagnostics.AddError("Failed to revoke the backup reader", err.Error())
+				return
+			}
+		}
 	}
 
 	plan.ID = types.StringValue(name)

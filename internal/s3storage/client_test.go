@@ -3,9 +3,12 @@ package s3storage
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/ceph/go-ceph/rgw/admin"
@@ -37,7 +40,28 @@ func newTestClient(t *testing.T, handler http.HandlerFunc) (*Client, *fakeBucket
 		t.Fatalf("admin.New: %v", err)
 	}
 	fake := &fakeBucketCreator{}
-	return &Client{api: api, s3: fake}, fake
+	return &Client{api: api, s3: fake, endpoint: srv.URL, reader: "backup-reader"}, fake
+}
+
+// policyBucket reports the bucket of an S3 bucket-policy request with the given
+// method.
+func policyBucket(r *http.Request, method string) (string, bool) {
+	if _, ok := r.URL.Query()["policy"]; !ok || r.Method != method {
+		return "", false
+	}
+	return strings.TrimPrefix(r.URL.Path, "/"), true
+}
+
+// signingKey is the access key id in a SigV4 Authorization header.
+func signingKey(r *http.Request) string {
+	_, cred, _ := strings.Cut(r.Header.Get("Authorization"), "Credential=")
+	key, _, _ := strings.Cut(cred, "/")
+	return key
+}
+
+func writeS3Error(w http.ResponseWriter, status int, code string) {
+	w.WriteHeader(status)
+	_, _ = fmt.Fprintf(w, "<Error><Code>%s</Code></Error>", code)
 }
 
 func writeJSON(t *testing.T, w http.ResponseWriter, v any) {
@@ -215,6 +239,169 @@ func TestClientDelete(t *testing.T) {
 	}
 	if !removedUser {
 		t.Error("user was not removed")
+	}
+}
+
+func TestClientGrantReader(t *testing.T) {
+	type statement struct {
+		Effect    string
+		Principal map[string][]string
+		Action    []string
+		Resource  []string
+	}
+	policies := map[string][]statement{}
+	client, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		bucket, ok := policyBucket(r, http.MethodPut)
+		if !ok {
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			return
+		}
+		if got := signingKey(r); got != "OWNER" {
+			t.Errorf("policy on %q signed with %q, want the owner's key", bucket, got)
+		}
+		var doc struct {
+			Version   string
+			Statement []statement
+		}
+		dec := json.NewDecoder(r.Body)
+		dec.DisallowUnknownFields()
+		if err := dec.Decode(&doc); err != nil {
+			t.Errorf("decode policy on %q: %v", bucket, err)
+		}
+		policies[bucket] = doc.Statement
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := client.GrantReader(context.Background(), "OWNER", "owner-secret", []string{"b1", "b2"}); err != nil {
+		t.Fatalf("GrantReader: %v", err)
+	}
+	if len(policies) != 2 {
+		t.Fatalf("policies written on %d buckets, want 2", len(policies))
+	}
+	for bucket, statements := range policies {
+		want := map[string]string{
+			"s3:ListBucket": "arn:aws:s3:::" + bucket,
+			"s3:GetObject":  "arn:aws:s3:::" + bucket + "/*",
+		}
+		for _, s := range statements {
+			principal := s.Principal["AWS"]
+			if s.Effect != "Allow" || len(s.Principal) != 1 || len(principal) != 1 || principal[0] != "arn:aws:iam:::user/backup-reader" {
+				t.Errorf("bucket %q: statement %+v does not allow exactly the reader", bucket, s)
+			}
+			if len(s.Action) != 1 || len(s.Resource) != 1 || want[s.Action[0]] != s.Resource[0] {
+				t.Errorf("bucket %q: statement grants %v on %v", bucket, s.Action, s.Resource)
+				continue
+			}
+			delete(want, s.Action[0])
+		}
+		if len(want) != 0 {
+			t.Errorf("bucket %q: policy does not grant %v", bucket, want)
+		}
+	}
+}
+
+func TestClientRevokeReader(t *testing.T) {
+	var revoked []string
+	client, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		bucket, ok := policyBucket(r, http.MethodDelete)
+		if !ok {
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+			return
+		}
+		if got := signingKey(r); got != "OWNER" {
+			t.Errorf("policy delete on %q signed with %q, want the owner's key", bucket, got)
+		}
+		revoked = append(revoked, bucket)
+		if bucket == "no-policy" {
+			writeS3Error(w, http.StatusNotFound, "NoSuchBucketPolicy")
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	if err := client.RevokeReader(context.Background(), "OWNER", "owner-secret", []string{"b1", "no-policy"}); err != nil {
+		t.Fatalf("RevokeReader: %v", err)
+	}
+	sort.Strings(revoked)
+	if len(revoked) != 2 || revoked[0] != "b1" || revoked[1] != "no-policy" {
+		t.Errorf("revoked buckets = %v", revoked)
+	}
+}
+
+func TestClientReaderGranted(t *testing.T) {
+	// The reader policy re-laid out, as a store that does not keep the written
+	// bytes would return it.
+	stored := func(reader, bucket string) string {
+		var doc any
+		if err := json.Unmarshal([]byte(readerPolicy(reader, bucket)), &doc); err != nil {
+			t.Fatalf("unmarshal reader policy: %v", err)
+		}
+		out, err := json.MarshalIndent(doc, "", "  ")
+		if err != nil {
+			t.Fatalf("marshal reader policy: %v", err)
+		}
+		return string(out)
+	}
+
+	cases := []struct {
+		name    string
+		b2      func(w http.ResponseWriter)
+		want    bool
+		wantErr bool
+	}{
+		{
+			name: "every bucket granted",
+			b2:   func(w http.ResponseWriter) { _, _ = io.WriteString(w, stored("backup-reader", "b2")) },
+			want: true,
+		},
+		{
+			name: "a bucket without a policy",
+			b2:   func(w http.ResponseWriter) { writeS3Error(w, http.StatusNotFound, "NoSuchBucketPolicy") },
+		},
+		{
+			name: "a policy naming another user",
+			b2:   func(w http.ResponseWriter) { _, _ = io.WriteString(w, stored("someone-else", "b2")) },
+		},
+		{
+			name: "another bucket's policy",
+			b2:   func(w http.ResponseWriter) { _, _ = io.WriteString(w, stored("backup-reader", "b1")) },
+		},
+		{
+			name:    "policy read refused",
+			b2:      func(w http.ResponseWriter) { writeS3Error(w, http.StatusForbidden, "AccessDenied") },
+			wantErr: true,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+				bucket, ok := policyBucket(r, http.MethodGet)
+				if !ok {
+					t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+					return
+				}
+				if got := signingKey(r); got != "OWNER" {
+					t.Errorf("policy read on %q signed with %q, want the owner's key", bucket, got)
+				}
+				switch bucket {
+				case "b1":
+					_, _ = io.WriteString(w, stored("backup-reader", "b1"))
+				case "b2":
+					tc.b2(w)
+				default:
+					t.Errorf("unexpected bucket %q", bucket)
+				}
+			})
+
+			granted, err := client.ReaderGranted(context.Background(), "OWNER", "owner-secret", []string{"b1", "b2"})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ReaderGranted error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if granted != tc.want {
+				t.Errorf("ReaderGranted = %v, want %v", granted, tc.want)
+			}
+		})
 	}
 }
 

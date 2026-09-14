@@ -4,6 +4,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/aws/aws-sdk-go-v2/aws"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 
@@ -32,12 +35,28 @@ func liveClient(t *testing.T) *s3storage.Client {
 		os.Getenv("HOMELAB_S3_ENDPOINT"),
 		os.Getenv("HOMELAB_S3_ADMIN_ACCESS_KEY"),
 		os.Getenv("HOMELAB_S3_ADMIN_SECRET_KEY"),
+		"",
 		"acctest",
 	)
 	if err != nil {
 		t.Fatalf("build s3 client: %v", err)
 	}
 	return client
+}
+
+type keyPair struct {
+	access, secret string
+}
+
+// liveS3 is an S3 client signing with key, for acting as an owner or reader.
+func liveS3(key keyPair) *s3.Client {
+	return s3.New(s3.Options{
+		Region:                     "us-east-1",
+		Credentials:                credentials.NewStaticCredentialsProvider(key.access, key.secret, ""),
+		BaseEndpoint:               aws.String(os.Getenv("HOMELAB_S3_ENDPOINT")),
+		UsePathStyle:               true,
+		RequestChecksumCalculation: aws.RequestChecksumCalculationWhenRequired,
+	})
 }
 
 var testAccProtoV6ProviderFactories = map[string]func() (tfprotov6.ProviderServer, error){

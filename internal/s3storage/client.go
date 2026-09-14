@@ -25,14 +25,18 @@ type bucketCreator interface {
 }
 
 // Client composes the RGW Admin Ops API (user/key/bucket ownership) with a
-// bucket creator (the only path that needs real S3).
+// bucket creator (the only path that needs real S3), and writes the reader's
+// bucket policies over S3 with each owner's key.
 type Client struct {
-	api *admin.API
-	s3  bucketCreator
+	api      *admin.API
+	s3       bucketCreator
+	endpoint string
+	reader   string
 }
 
 // NewClient builds a Client against the given RGW endpoint and admin keys.
-func NewClient(endpoint, adminAccessKey, adminSecretKey, version string) (*Client, error) {
+// reader is the RGW user id a grant names; empty means no grant is written.
+func NewClient(endpoint, adminAccessKey, adminSecretKey, reader, version string) (*Client, error) {
 	httpClient := &http.Client{Timeout: httpTimeout}
 
 	api, err := admin.New(endpoint, adminAccessKey, adminSecretKey, httpClient)
@@ -40,20 +44,29 @@ func NewClient(endpoint, adminAccessKey, adminSecretKey, version string) (*Clien
 		return nil, fmt.Errorf("init rgw admin api: %w", err)
 	}
 
-	cfg, err := awsconfig.LoadDefaultConfig(context.Background(),
+	s3c, err := newS3Client(context.Background(), endpoint, adminAccessKey, adminSecretKey)
+	if err != nil {
+		return nil, err
+	}
+
+	return &Client{api: api, s3: &awsBucketCreator{client: s3c}, endpoint: endpoint, reader: reader}, nil
+}
+
+// newS3Client builds a path-style S3 client against the RGW endpoint that signs
+// with the given key.
+func newS3Client(ctx context.Context, endpoint, accessKey, secretKey string) (*s3.Client, error) {
+	cfg, err := awsconfig.LoadDefaultConfig(ctx,
 		awsconfig.WithRegion("us-east-1"),
 		awsconfig.WithCredentialsProvider(
-			credentials.NewStaticCredentialsProvider(adminAccessKey, adminSecretKey, "")),
+			credentials.NewStaticCredentialsProvider(accessKey, secretKey, "")),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("load aws config: %w", err)
 	}
-	s3c := s3.NewFromConfig(cfg, func(o *s3.Options) {
+	return s3.NewFromConfig(cfg, func(o *s3.Options) {
 		o.BaseEndpoint = aws.String(endpoint)
 		o.UsePathStyle = true
-	})
-
-	return &Client{api: api, s3: &awsBucketCreator{client: s3c}}, nil
+	}), nil
 }
 
 // awsBucketCreator is the production bucketCreator over aws-sdk-go-v2.

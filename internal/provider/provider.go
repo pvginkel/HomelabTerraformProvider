@@ -19,6 +19,7 @@ import (
 	"github.com/pvginkel/HomelabTerraformProvider/internal/dnsreservation"
 	"github.com/pvginkel/HomelabTerraformProvider/internal/httplog"
 	"github.com/pvginkel/HomelabTerraformProvider/internal/rbdimage"
+	"github.com/pvginkel/HomelabTerraformProvider/internal/s3reader"
 	"github.com/pvginkel/HomelabTerraformProvider/internal/s3storage"
 	"github.com/pvginkel/HomelabTerraformProvider/internal/zfsdataset"
 )
@@ -35,6 +36,7 @@ const (
 	envS3Endpoint  = "HOMELAB_S3_ENDPOINT"
 	envS3AccessKey = "HOMELAB_S3_ADMIN_ACCESS_KEY"
 	envS3SecretKey = "HOMELAB_S3_ADMIN_SECRET_KEY"
+	envS3Reader    = "HOMELAB_S3_BACKUP_READER"
 	envIACToken    = "HOMELAB_IAC_PROVISIONER_TOKEN"
 
 	defaultIACProvisionerPort = 9655
@@ -58,6 +60,7 @@ type homelabProviderModel struct {
 	S3Endpoint  types.String `tfsdk:"s3_endpoint"`
 	S3AccessKey types.String `tfsdk:"s3_admin_access_key"`
 	S3SecretKey types.String `tfsdk:"s3_admin_secret_key"`
+	S3Reader    types.String `tfsdk:"s3_backup_reader"`
 
 	ZFSPools            types.Map    `tfsdk:"zfs_pools"`
 	IACProvisionerToken types.String `tfsdk:"iac_provisioner_token"`
@@ -68,11 +71,12 @@ type homelabProviderModel struct {
 // via ResourceData. Any client may be nil when its provider group was left
 // unset; the resource itself reports the missing configuration.
 type providerClients struct {
-	dns    *dnsreservation.Client
-	backup *backupcredential.Client
-	ceph   *cephconn.Conn
-	s3     *s3storage.Client
-	zfs    *zfsdataset.Client
+	dns      *dnsreservation.Client
+	backup   *backupcredential.Client
+	ceph     *cephconn.Conn
+	s3       *s3storage.Client
+	s3Reader *s3reader.Client
+	zfs      *zfsdataset.Client
 }
 
 func (p *providerClients) DNSReservationClient() *dnsreservation.Client {
@@ -91,6 +95,10 @@ func (p *providerClients) S3StorageClient() *s3storage.Client {
 	return p.s3
 }
 
+func (p *providerClients) S3ReaderClient() *s3reader.Client {
+	return p.s3Reader
+}
+
 func (p *providerClients) ZFSDatasetClient() *zfsdataset.Client {
 	return p.zfs
 }
@@ -101,6 +109,7 @@ var (
 	_ rbdimage.ProviderData         = (*providerClients)(nil)
 	_ cephfssubvolume.ProviderData  = (*providerClients)(nil)
 	_ s3storage.ProviderData        = (*providerClients)(nil)
+	_ s3reader.ProviderData         = (*providerClients)(nil)
 	_ zfsdataset.ProviderData       = (*providerClients)(nil)
 )
 
@@ -164,8 +173,8 @@ func (p *HomelabProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				Optional:            true,
 			},
 			"s3_endpoint": schema.StringAttribute{
-				Description:         "RGW endpoint URL (e.g. http://ceph:7480). Falls back to HOMELAB_S3_ENDPOINT. Required together with s3_admin_access_key and s3_admin_secret_key for the s3 resource.",
-				MarkdownDescription: "RGW endpoint URL (e.g. `http://ceph:7480`). Falls back to `HOMELAB_S3_ENDPOINT`. Required together with `s3_admin_access_key` and `s3_admin_secret_key` for the s3 resource.",
+				Description:         "RGW endpoint URL (e.g. http://ceph:7480). Falls back to HOMELAB_S3_ENDPOINT. Required together with s3_admin_access_key and s3_admin_secret_key for the s3 resources.",
+				MarkdownDescription: "RGW endpoint URL (e.g. `http://ceph:7480`). Falls back to `HOMELAB_S3_ENDPOINT`. Required together with `s3_admin_access_key` and `s3_admin_secret_key` for the s3 resources.",
 				Optional:            true,
 			},
 			"s3_admin_access_key": schema.StringAttribute{
@@ -179,6 +188,11 @@ func (p *HomelabProvider) Schema(_ context.Context, _ provider.SchemaRequest, re
 				MarkdownDescription: "Secret key of the RGW admin user. Falls back to `HOMELAB_S3_ADMIN_SECRET_KEY`.",
 				Optional:            true,
 				Sensitive:           true,
+			},
+			"s3_backup_reader": schema.StringAttribute{
+				Description:         "RGW user id the bucket policies of homelab_s3_storage's grant_backup_reader name (e.g. backup-reader). Falls back to HOMELAB_S3_BACKUP_READER. The s3 group's one optional member: unset, grant_backup_reader writes, deletes and checks nothing.",
+				MarkdownDescription: "RGW user id the bucket policies of `homelab_s3_storage`'s `grant_backup_reader` name (e.g. `backup-reader`). Falls back to `HOMELAB_S3_BACKUP_READER`. The s3 group's one optional member: unset, `grant_backup_reader` writes, deletes and checks nothing.",
+				Optional:            true,
 			},
 			"zfs_pools": schema.MapAttribute{
 				Description:         "Map of ZFS pool name -> node hostname (.home). The provider resolves a dataset's pool to a node and addresses that node's iac-provisioner agent. Required together with iac_provisioner_token for the homelab_zfs_dataset resource.",
@@ -211,7 +225,7 @@ func (p *HomelabProvider) Configure(ctx context.Context, req provider.ConfigureR
 	// Defer until plan-time when these come from another resource's output.
 	if cfg.DNSURL.IsUnknown() || cfg.DNSToken.IsUnknown() || cfg.BackupURL.IsUnknown() || cfg.BackupToken.IsUnknown() ||
 		cfg.CephMonHost.IsUnknown() || cfg.CephUser.IsUnknown() || cfg.CephKey.IsUnknown() || cfg.CephPool.IsUnknown() ||
-		cfg.S3Endpoint.IsUnknown() || cfg.S3AccessKey.IsUnknown() || cfg.S3SecretKey.IsUnknown() ||
+		cfg.S3Endpoint.IsUnknown() || cfg.S3AccessKey.IsUnknown() || cfg.S3SecretKey.IsUnknown() || cfg.S3Reader.IsUnknown() ||
 		cfg.ZFSPools.IsUnknown() || cfg.IACProvisionerToken.IsUnknown() || cfg.IACProvisionerPort.IsUnknown() {
 		return
 	}
@@ -227,6 +241,7 @@ func (p *HomelabProvider) Configure(ctx context.Context, req provider.ConfigureR
 	s3Endpoint := resolveStringConfig(cfg.S3Endpoint, envS3Endpoint)
 	s3AccessKey := resolveStringConfig(cfg.S3AccessKey, envS3AccessKey)
 	s3SecretKey := resolveStringConfig(cfg.S3SecretKey, envS3SecretKey)
+	s3Reader := resolveStringConfig(cfg.S3Reader, envS3Reader)
 	iacToken := resolveStringConfig(cfg.IACProvisionerToken, envIACToken)
 
 	zfsPools := map[string]string{}
@@ -294,12 +309,21 @@ func (p *HomelabProvider) Configure(ctx context.Context, req provider.ConfigureR
 		clients.ceph = conn
 	}
 	if s3Set {
-		s3c, err := s3storage.NewClient(s3Endpoint, s3AccessKey, s3SecretKey, p.version)
+		// s3_backup_reader stays out of validateGroup, which would make it
+		// mandatory; it is ignored with the rest of a disabled s3 group.
+		s3c, err := s3storage.NewClient(s3Endpoint, s3AccessKey, s3SecretKey, s3Reader, p.version)
 		if err != nil {
 			resp.Diagnostics.AddError("Failed to initialize S3 client", err.Error())
 			return
 		}
 		clients.s3 = s3c
+
+		readerClient, err := s3reader.NewClient(s3Endpoint, s3AccessKey, s3SecretKey)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to initialize S3 reader client", err.Error())
+			return
+		}
+		clients.s3Reader = readerClient
 	}
 	if zfsSet {
 		clients.zfs = zfsdataset.NewClient(zfsPools, iacToken, iacPort, p.version)
@@ -348,6 +372,7 @@ func (p *HomelabProvider) Resources(_ context.Context) []func() resource.Resourc
 		rbdimage.NewResource,
 		cephfssubvolume.NewResource,
 		s3storage.NewResource,
+		s3reader.NewResource,
 		zfsdataset.NewResource,
 	}
 }
