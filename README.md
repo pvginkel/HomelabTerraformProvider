@@ -11,23 +11,26 @@ behind one provider. Built with
 | Go module        | `github.com/pvginkel/HomelabTerraformProvider`     |
 | Resource prefix  | `homelab_`                                         |
 
-The provider is consumed via a baked-in **filesystem mirror**, not a registry.
-The Jenkins build stamps each build as `0.1.<build-number>`, archives the
-binary, and the `iac` / `modern-app-dev` images install it into the mirror at
-`/usr/local/share/terraform/plugins/...`. `TF_CLI_CONFIG_FILE=/etc/terraform.rc`
-in those images points Terraform there, so `terraform init` resolves
-`pvginkel/homelab` with no per-machine setup. Because every build is a new
-version, the CI job also rewrites the consumer's `.terraform.lock.hcl` (in the
-Ansible repo) to match — no manual `terraform init -upgrade`.
+The provider is consumed through a private **Provider Network Mirror**, not the
+public registry: the `TerraformRegistry` repo → nginx image → HelmCharts release
+at `https://tfmirror.home/`. The `kube-coder-dev-base` and `modern-app-dev`
+images bake an `/etc/terraform.rc` with a `network_mirror` block for
+`registry.terraform.io/pvginkel/*` and set `TF_CLI_CONFIG_FILE` to it, so
+`terraform init` resolves `pvginkel/homelab` with no per-machine setup.
 
-**In transition to a network mirror.** Each build now *also* publishes the
-version to a private **Provider Network Mirror** (the `TerraformRegistry`
-repo → nginx image → HelmCharts release at `tfmirror.home`) via the
-`Publish to provider registry` stage and `scripts/registry-publish.sh`. The
-two paths run side by side: once consumers are switched to the network
-mirror (a `network_mirror` block in their CLI config), the filesystem-mirror
-bake and the Ansible-lock rewrite below are removed and the registry becomes
-the only delivery. See `AnsibleSpecs/slices/tf-provider-registry.md`.
+The Jenkins build stamps each build as `0.1.<build-number>`, archives the
+binary, and its `Publish to provider registry` stage
+(`scripts/registry-publish.sh`) adds that version to the mirror. That publish
+is the pipeline's only delivery path, and every push to `main` makes a new
+version.
+
+**Nothing rewrites a consumer's lock.** A consumer that commits its
+`.terraform.lock.hcl` (the Ansible repo's Terraform roots) stays on the version
+it pins until someone runs `terraform init -upgrade` there and commits the
+result. HelmCharts' deploy CLI inits with `-upgrade`, so it floats to the newest
+version. The mirror keeps the newest 10 versions (`KEEP` in the publish stage):
+a pinned lock has to move before its version ages out, or a fresh
+`terraform init` can no longer download it.
 
 **A build publishes only what passes `go vet` and the unit tests.** The
 `Vet and unit tests` stage runs `go vet ./...` and `go test ./...` between
@@ -38,7 +41,9 @@ Jenkins, but `scripts/fetch-install.sh` fetches `lastSuccessfulBuild` unless
 
 ## Install
 
-Two scripts populate the mirror layout on a box:
+The images need nothing: they resolve the provider from the network mirror.
+Two scripts put a binary into a **filesystem-mirror** layout on a box instead,
+for provider development or for a box that cannot reach `tfmirror.home`:
 
 ```sh
 # build from local source (provider development) — installs version.txt's version
@@ -49,12 +54,11 @@ JENKINS_URL=https://jenkins.home JENKINS_USER=<user> JENKINS_TOKEN=<token> \
     ./scripts/fetch-install.sh
 ```
 
-Both default to `PLUGIN_ROOT=/usr/local/share/terraform/plugins`. A local
-source build is a one-off version, so it won't match the CI-maintained lock —
-run `terraform init -upgrade` in the consumer dir when iterating locally.
-
-The mirror config Terraform reads (already baked into the images at
-`/etc/terraform.rc`):
+Both default to `PLUGIN_ROOT=/usr/local/share/terraform/plugins`. Terraform
+reads that directory only when its CLI config says so, and the images'
+`/etc/terraform.rc` names the network mirror instead. So point
+`TF_CLI_CONFIG_FILE` at a file like this for the shell that should use the
+installed binary:
 
 ```hcl
 provider_installation {
@@ -67,6 +71,10 @@ provider_installation {
   }
 }
 ```
+
+A local source build is a one-off version, so it won't match a committed
+lock — run `terraform init -upgrade` in the consumer dir when iterating
+locally, and don't commit that lock.
 
 Consuming modules then declare:
 
