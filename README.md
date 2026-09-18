@@ -29,6 +29,13 @@ mirror (a `network_mirror` block in their CLI config), the filesystem-mirror
 bake and the Ansible-lock rewrite below are removed and the registry becomes
 the only delivery. See `AnsibleSpecs/slices/tf-provider-registry.md`.
 
+**A build publishes only what passes `go vet` and the unit tests.** The
+`Vet and unit tests` stage runs `go vet ./...` and `go test ./...` between
+the build and the publish, and a failure there fails the build before
+anything reaches the registry. A red build has still archived its binary in
+Jenkins, but `scripts/fetch-install.sh` fetches `lastSuccessfulBuild` unless
+`BUILD` says otherwise, so by default it skips one.
+
 ## Install
 
 Two scripts populate the mirror layout on a box:
@@ -356,8 +363,9 @@ CGO_ENABLED=1 go test ./...                              # unit tests (no networ
 (The S3 and quantity packages are pure Go and build/test without the Ceph
 libs; only the cgo packages need them.)
 
-Acceptance tests hit live backends. They are guarded by `TF_ACC=1` and
-require the same env vars the provider itself consumes:
+Acceptance tests hit live backends. They are guarded by `TF_ACC=1`, which
+the Jenkins build does not set, so they are a manual run; they require the
+same env vars the provider itself consumes:
 
 ```sh
 TF_ACC=1 \
