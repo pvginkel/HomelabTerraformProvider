@@ -36,8 +36,8 @@ projects:
     # reaches no real infrastructure.
     test: cexec go go test ./...
 
-    # `go vet` because CI runs no linter at all — the Jenkinsfile's build stage
-    # is `go build` plus `go version -m` — and the repo carries no
-    # golangci-lint config. The `go` sidecar does ship golangci-lint; adopting
-    # it, and with which rule set, is a repo decision nobody has taken.
+    # `go vet` is the same check the Jenkinsfile runs before publish, beside
+    # the unit tests. The repo carries no golangci-lint config. The `go`
+    # sidecar does ship golangci-lint; adopting it, and with which rule set,
+    # is a repo decision nobody has taken.
     lint: cexec go go vet ./...

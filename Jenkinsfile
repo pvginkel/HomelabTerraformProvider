@@ -53,6 +53,20 @@ podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
             }
         }
 
+        // A vet or test failure fails the build here, so nothing reaches the
+        // registry. Must run after the build stage: vet and the test links
+        // are cgo and need the librados/librbd headers it installed into `go`.
+        // TF_ACC stays unset — the acceptance tests (TestAcc*) skip without
+        // it; they need live backends and are a manual run.
+        stage('Vet and unit tests') {
+            dir('HomelabTerraformProvider') {
+                container('go') {
+                    sh 'go vet ./...'
+                    sh 'go test ./...'
+                }
+            }
+        }
+
         // Append this build to the Provider Network Mirror (the dedicated
         // TerraformRegistry repo's dist/ tree) and push. That push triggers
         // the registry's pipeline, which rebuilds the nginx image and lets
