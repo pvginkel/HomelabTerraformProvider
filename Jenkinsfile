@@ -75,12 +75,8 @@ podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
         // filesystem mirror, writes the index.json/<version>.json, and
         // prunes to the newest KEEP versions. Runs in `tf` (modern-app-dev:
         // ships terraform + python3). Additive and idempotent — it never
-        // mutates a version a consumer's lock still pins.
-        //
-        // Runs alongside the legacy filesystem-mirror path below until the
-        // consumers are switched to the network mirror; once that lands, the
-        // Ansible-lock and Docker-image-bake stages go away and this is the
-        // only delivery.
+        // mutates a version a consumer's lock still pins. This is the
+        // pipeline's only delivery path.
         stage('Publish to provider registry') {
             container('tf') {
                 withCredentials([usernamePassword(
