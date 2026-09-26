@@ -13,10 +13,11 @@ behind one provider. Built with
 
 The provider is consumed through a private **Provider Network Mirror**, not the
 public registry: the `TerraformRegistry` repo → nginx image → HelmCharts release
-at `https://tfmirror.home/`. The `kube-coder-dev-base` and `modern-app-dev`
-images bake an `/etc/terraform.rc` with a `network_mirror` block for
-`registry.terraform.io/pvginkel/*` and set `TF_CLI_CONFIG_FILE` to it, so
-`terraform init` resolves `pvginkel/homelab` with no per-machine setup.
+at `https://tfmirror.home/`. The `kube-coder-dev-base` image (and so every
+KubeCoder toolchain image built on it), Ansible's `support/iac-image` and
+ArgoCDTools' `argocd-hook` bake an `/etc/terraform.rc` with a `network_mirror`
+block for `registry.terraform.io/pvginkel/*` and set `TF_CLI_CONFIG_FILE` to
+it, so `terraform init` resolves `pvginkel/homelab` with no per-machine setup.
 
 The Jenkins build stamps each build as `0.1.<build-number>`, archives the
 binary, and its `Publish to provider registry` stage

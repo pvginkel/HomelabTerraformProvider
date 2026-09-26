@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Build terraform-provider-homelab and drop the binary into the
-# filesystem-mirror layout that modern-app-dev consumes. Mirrors the
-# Jenkins pipeline (same -ldflags, same install path); use this for
-# local iteration when waiting on a Jenkins + image rebuild is too slow.
+# Build terraform-provider-homelab and drop the binary into a
+# filesystem-mirror layout under PLUGIN_ROOT. The images resolve the
+# provider from the tfmirror.home network mirror and never read this
+# layout. Same -ldflags as the Jenkins pipeline; use this for local
+# iteration when waiting on a Jenkins build and publish is too slow.
 #
 # version.txt holds only the major.minor series (e.g. 0.1); CI appends the
 # Jenkins build number. For a local build there's no build number, so default

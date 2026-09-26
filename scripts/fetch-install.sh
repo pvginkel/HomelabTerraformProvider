@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Fetch the CI-built terraform-provider-homelab binary from Jenkins and install
-# it into the filesystem-mirror layout that the iac / modern-app-dev images
-# consume. Use this to drop the *released* provider onto a box without building
-# from source — the source-build counterpart is scripts/install-local.sh.
+# it into a filesystem-mirror layout under PLUGIN_ROOT. The images resolve the
+# provider from the tfmirror.home network mirror and never read this layout. Use
+# this to drop the *released* provider onto a box without building from source —
+# the source-build counterpart is scripts/install-local.sh.
 #
 # Env vars:
 #   JENKINS_URL    base url, e.g. https://jenkins.home              (required)

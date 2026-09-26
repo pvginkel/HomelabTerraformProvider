@@ -2,7 +2,7 @@ library identifier: 'JenkinsPipelineUtils', changelog: false
 
 podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
     containerTemplate(name: 'go', image: 'golang:1.25', command: 'sleep', args: 'infinity'),
-    containerTemplates.modern_app_dev('tf')
+    containerTemplates.iac_toolchain('tf')
 ]) {
     node(POD_LABEL) {
         def version
@@ -73,10 +73,10 @@ podTemplate(inheritFrom: 'jenkins-agent-large', containers: [
         // HelmCharts redeploy it at tfmirror.home. registry-publish.sh zips
         // the binary, has terraform compute the h1 hash off a throwaway
         // filesystem mirror, writes the index.json/<version>.json, and
-        // prunes to the newest KEEP versions. Runs in `tf` (modern-app-dev:
-        // ships terraform + python3). Additive and idempotent — it never
-        // mutates a version a consumer's lock still pins. This is the
-        // pipeline's only delivery path.
+        // prunes to the newest KEEP versions. Runs in `tf`
+        // (kube-coder-iac-toolchain: ships terraform + python3). Additive and
+        // idempotent — it never mutates a version a consumer's lock still
+        // pins. This is the pipeline's only delivery path.
         stage('Publish to provider registry') {
             container('tf') {
                 withCredentials([usernamePassword(
