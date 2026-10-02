@@ -12,7 +12,7 @@ behind one provider. Built with
 | Resource prefix  | `homelab_`                                         |
 
 The provider is consumed through a private **Provider Network Mirror**, not the
-public registry: the `TerraformRegistry` repo → nginx image → HelmCharts release
+public registry: the `TerraformRegistry` repo → nginx image → TfmirrorDeploy pin → Argo CD release
 at `https://tfmirror.home/`. The `kube-coder-dev-base` image (and so every
 KubeCoder toolchain image built on it), Ansible's `support/iac-image` and
 ArgoCDTools' `argocd-hook` bake an `/etc/terraform.rc` with a `network_mirror`
