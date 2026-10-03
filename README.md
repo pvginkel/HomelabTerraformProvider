@@ -26,10 +26,14 @@ is the pipeline's only delivery path, and every push to `main` makes a new
 version.
 
 **Nothing rewrites a consumer's lock.** A consumer that commits its
-`.terraform.lock.hcl` (the Ansible repo's Terraform roots) stays on the version
-it pins until someone runs `terraform init -upgrade` there and commits the
-result. HelmCharts' deploy CLI inits with `-upgrade`, so it floats to the newest
-version. The mirror keeps the newest 10 versions (`KEEP` in the publish stage):
+`.terraform.lock.hcl` (the Ansible repo's `terraform/prd` and
+`terraform/scratch` roots) stays on the version it pins until someone runs
+`terraform init -upgrade` there and commits the result. No deploy repo commits
+a lock: their Terraform is applied by ArgoCDTools' Argo CD PreSync hook, which
+runs `terraform init -input=false`, without `-upgrade`, in a fresh clone. So a
+deploy repo resolves the newest version matching its constraint on each fresh
+init (the ones checked set none, so they take the newest in the mirror). The
+mirror keeps the newest 10 versions (`KEEP` in the publish stage):
 a pinned lock has to move before its version ages out, or a fresh
 `terraform init` can no longer download it.
 
