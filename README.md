@@ -33,9 +33,11 @@ a lock: their Terraform is applied by ArgoCDTools' Argo CD PreSync hook, which
 runs `terraform init -input=false`, without `-upgrade`, in a fresh clone. So a
 deploy repo resolves the newest version matching its constraint on each fresh
 init (the ones checked set none, so they take the newest in the mirror). The
-mirror keeps the newest 10 versions (`KEEP` in the publish stage):
-a pinned lock has to move before its version ages out, or a fresh
-`terraform init` can no longer download it.
+mirror keeps the newest 10 versions (`KEEP` in the publish stage), plus every
+version the Ansible `terraform/prd` and `terraform/scratch` locks pin (`LOCKS`,
+read off Ansible's `main` at each publish), so a pinned lock never ages out of
+the mirror. A lock file missing there fails the publish before the registry
+changes.
 
 **A build publishes only what passes `go vet` and the unit tests.** The
 `Vet and unit tests` stage runs `go vet ./...` and `go test ./...` between

@@ -43,6 +43,13 @@ pipeline {
                 dir('HomelabTerraformProvider') {
                     checkout scm
                 }
+                // Ansible is read, not built: with polling on, an Ansible push would start this
+                // job and mint a provider version.
+                dir('Ansible') {
+                    git url: 'https://github.com/pvginkel/Ansible.git', branch: 'main',
+                        credentialsId: '5f6fbd66-b41c-405f-b107-85ba6fd97f10',
+                        changelog: false, poll: false
+                }
             }
         }
 
@@ -109,8 +116,9 @@ pipeline {
 
         // registry-publish.sh zips the binary, has terraform compute the h1 hash off a throwaway
         // filesystem mirror, writes index.json and <version>.json, and prunes to the newest KEEP
-        // versions. It is additive and idempotent: it never changes a version a consumer's lock
-        // still pins.
+        // versions plus every version LOCKS pin: Ansible's terraform/prd and terraform/scratch
+        // locks, so a fresh init in those roots always finds its provider. A missing lock fails the
+        // stage before the registry is touched.
         stage('Publish provider') {
             steps {
                 container('iac-toolchain') {
@@ -123,13 +131,14 @@ pipeline {
                             git config --global --add safe.directory '*'
 
                             bin="\$PWD/HomelabTerraformProvider/terraform-provider-homelab"
+                            locks="\$PWD/Ansible/terraform/prd/.terraform.lock.hcl \$PWD/Ansible/terraform/scratch/.terraform.lock.hcl"
 
                             git clone --depth 1 \
                                 "https://\${GIT_USER}:\${GIT_TOKEN}@github.com/pvginkel/TerraformRegistry.git" registry
                             git -C registry config user.name  'jenkins'
                             git -C registry config user.email 'jenkins@webathome.org'
 
-                            BIN="\$bin" VERSION="${version}" DIST="\$PWD/registry/dist" KEEP=10 \
+                            BIN="\$bin" VERSION="${version}" DIST="\$PWD/registry/dist" KEEP=10 LOCKS="\$locks" \
                                 HomelabTerraformProvider/scripts/registry-publish.sh
 
                             git -C registry add -A dist

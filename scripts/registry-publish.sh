@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Append a built terraform-provider-homelab to a Provider Network Mirror
-# tree (the TerraformRegistry repo's dist/) and prune old versions.
+# tree (the TerraformRegistry repo's dist/) and prune old versions, except
+# the ones a consumer's lock file pins.
 #
 # Produces, under <dist>/registry.terraform.io/pvginkel/homelab/ :
 #   terraform-provider-homelab_<version>_<os>_<arch>.zip   (the binary, zipped)
@@ -18,6 +19,9 @@
 #   VERSION    <series>.<build>, e.g. 0.1.27               (required)
 #   DIST       path to the registry checkout's dist/ root  (required)
 #   KEEP       how many newest versions to retain          (default 10)
+#   LOCKS      space-separated .terraform.lock.hcl paths   (default none)
+#              whose pvginkel/homelab version is never pruned; a missing
+#              one fails the run before anything is written
 #   PLATFORMS  space-separated <os>_<arch> list            (default linux_amd64)
 #
 # Needs: terraform, python3.
@@ -28,12 +32,36 @@ BIN="${BIN:?set BIN to the built provider binary}"
 VERSION="${VERSION:?set VERSION (e.g. 0.1.27)}"
 DIST="${DIST:?set DIST to the registry dist/ root}"
 KEEP="${KEEP:-10}"
+LOCKS="${LOCKS:-}"
 PLATFORMS="${PLATFORMS:-linux_amd64}"
 
 HOST="registry.terraform.io"
 NS="pvginkel"
 NAME="homelab"
 BINNAME="terraform-provider-${NAME}"
+
+# Read the pins before DIST is touched: a lock that cannot be read must fail
+# the run, not let the prune drop the version it pins.
+PINNED="$(python3 - "${HOST}/${NS}/${NAME}" $LOCKS <<'PY'
+import re, sys
+
+addr, *locks = sys.argv[1:]
+block = re.compile(rf'provider\s+"{re.escape(addr)}"\s*\{{([^}}]*)\}}')
+version = re.compile(r'^\s*version\s*=\s*"([^"]+)"', re.M)
+
+pins = set()
+for path in locks:
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError as e:
+        sys.exit(f"error: cannot read lock file {path}: {e.strerror}")
+    for body in block.findall(text):
+        pins.update(version.findall(body))
+print(" ".join(sorted(pins)))
+PY
+)"
+echo "==> pinned by LOCKS: ${PINNED:-none}"
 
 PDIR="${DIST}/${HOST}/${NS}/${NAME}"
 mkdir -p "$PDIR"
@@ -87,12 +115,14 @@ EOF
     echo "==> staged ${zipname} (${h1}, ${zh})"
 done
 
-# Assemble <version>.json, merge index.json, and prune to KEEP newest.
-VERSION="$VERSION" KEEP="$KEEP" PDIR="$PDIR" ROWS="$rows" python3 - <<'PY'
+# Assemble <version>.json, merge index.json, and prune to KEEP newest plus
+# the pinned versions.
+VERSION="$VERSION" KEEP="$KEEP" PINNED="$PINNED" PDIR="$PDIR" ROWS="$rows" python3 - <<'PY'
 import json, os, re
 
 version = os.environ["VERSION"]
 keep = int(os.environ["KEEP"])
+pinned = set(os.environ["PINNED"].split())
 pdir = os.environ["PDIR"]
 rows = os.environ["ROWS"]
 
@@ -119,7 +149,8 @@ def key(v):
     return [int(p) if p.isdigit() else p for p in v.split(".")]
 
 ordered = sorted(versions, key=key)
-pruned = ordered[:-keep] if keep > 0 and len(ordered) > keep else []
+older = ordered[:-keep] if keep > 0 and len(ordered) > keep else []
+pruned = [v for v in older if v not in pinned]
 for v in pruned:
     del versions[v]
     for fn in (f"{v}.json",):
