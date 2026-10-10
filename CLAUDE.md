@@ -19,7 +19,7 @@ Each resource has its backend API spec'd outside this repo. Read the
 relevant spec before changing the corresponding resource.
 
 - `homelab_dns_reservation`
-  - `/work/DockerImages/dnsmasq-management-api/dns-reservation-api.md` —
+  - `/work/Dnsmasq/management-api/dns-reservation-api.md` —
     sidecar HTTP API surface, kept beside the implementation
   - `/work/AnsibleSpecs/slices/completed/dns-reservation-provider/dns-reservation-terraform.md`
     — Terraform resource shape. Frozen with the slice that shipped it, so
