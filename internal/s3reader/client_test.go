@@ -117,6 +117,55 @@ func TestClientReadNotFound(t *testing.T) {
 	}
 }
 
+func TestClientRotateKey(t *testing.T) {
+	var removedOld bool
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		_, keyOp := r.URL.Query()["key"]
+		switch {
+		case r.Method == http.MethodPut && r.URL.Path == "/admin/user" && keyOp:
+			if got := r.URL.Query().Get("uid"); got != "backup-reader" {
+				t.Errorf("uid = %q, want backup-reader", got)
+			}
+			writeJSON(t, w, []admin.UserKeySpec{
+				{User: "backup-reader", AccessKey: "OLD", SecretKey: "olds"},
+				{User: "backup-reader", AccessKey: "NEW", SecretKey: "news"},
+			})
+		case r.Method == http.MethodDelete && r.URL.Path == "/admin/user" && keyOp:
+			if got := r.URL.Query().Get("access-key"); got != "OLD" {
+				t.Errorf("removed access-key = %q, want OLD", got)
+			}
+			removedOld = true
+			w.WriteHeader(http.StatusOK)
+		default:
+			t.Errorf("unexpected request %s %s?%s", r.Method, r.URL.Path, r.URL.RawQuery)
+		}
+	})
+
+	access, secret, err := client.RotateKey(context.Background(), "backup-reader", "OLD")
+	if err != nil {
+		t.Fatalf("RotateKey: %v", err)
+	}
+	if access != "NEW" || secret != "news" {
+		t.Errorf("rotated to %q/%q, want NEW/news", access, secret)
+	}
+	if !removedOld {
+		t.Error("old key was not removed")
+	}
+}
+
+func TestClientRotateKeyWithoutNewKey(t *testing.T) {
+	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut {
+			t.Errorf("%s sent after RGW returned no new key", r.Method)
+		}
+		writeJSON(t, w, []admin.UserKeySpec{{User: "backup-reader", AccessKey: "OLD", SecretKey: "olds"}})
+	})
+
+	if _, _, err := client.RotateKey(context.Background(), "backup-reader", "OLD"); err == nil {
+		t.Fatal("RotateKey succeeded with no new key")
+	}
+}
+
 func TestClientDelete(t *testing.T) {
 	var removed string
 	client := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {

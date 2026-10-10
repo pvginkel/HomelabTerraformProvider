@@ -69,10 +69,39 @@ func (c *Client) Read(ctx context.Context, name, accessKey string) (*Reader, boo
 	return rd, true, nil
 }
 
+// RotateKey mints a fresh s3 key on the user, then removes the old one.
+func (c *Client) RotateKey(ctx context.Context, name, oldAccessKey string) (access, secret string, err error) {
+	keys, err := c.api.CreateKey(ctx, admin.UserKeySpec{UID: name, KeyType: "s3"})
+	if err != nil {
+		return "", "", fmt.Errorf("create new key for user %q: %w", name, err)
+	}
+	access, secret = newestKey(keys, oldAccessKey)
+	if access == "" {
+		return "", "", fmt.Errorf("rgw did not return a new key for user %q", name)
+	}
+	if err := c.api.RemoveKey(ctx, admin.UserKeySpec{UID: name, AccessKey: oldAccessKey, KeyType: "s3"}); err != nil {
+		return "", "", fmt.Errorf("remove old key for user %q: %w", name, err)
+	}
+	return access, secret, nil
+}
+
 // Delete removes the user. A missing user is treated as success.
 func (c *Client) Delete(ctx context.Context, name string) error {
 	if err := c.api.RemoveUser(ctx, admin.User{ID: name}); err != nil && !IsNotFound(err) {
 		return fmt.Errorf("remove rgw user %q: %w", name, err)
 	}
 	return nil
+}
+
+// newestKey returns the key whose access key differs from oldAccessKey.
+func newestKey(keys *[]admin.UserKeySpec, oldAccessKey string) (string, string) {
+	if keys == nil {
+		return "", ""
+	}
+	for _, k := range *keys {
+		if k.AccessKey != oldAccessKey {
+			return k.AccessKey, k.SecretKey
+		}
+	}
+	return "", ""
 }

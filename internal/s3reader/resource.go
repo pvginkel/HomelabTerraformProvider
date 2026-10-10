@@ -16,6 +16,7 @@ var (
 	_ resource.Resource                = (*s3ReaderResource)(nil)
 	_ resource.ResourceWithConfigure   = (*s3ReaderResource)(nil)
 	_ resource.ResourceWithImportState = (*s3ReaderResource)(nil)
+	_ resource.ResourceWithModifyPlan  = (*s3ReaderResource)(nil)
 )
 
 // ProviderData is the interface the provider's wiring satisfies so this package
@@ -35,6 +36,7 @@ type s3ReaderResource struct {
 type s3ReaderModel struct {
 	ID              types.String `tfsdk:"id"`
 	Name            types.String `tfsdk:"name"`
+	KeyRotation     types.String `tfsdk:"key_rotation"`
 	AccessKeyID     types.String `tfsdk:"access_key_id"`
 	SecretAccessKey types.String `tfsdk:"secret_access_key"`
 }
@@ -65,6 +67,13 @@ func (r *s3ReaderResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.RequiresReplace(),
 				},
+			},
+			"key_rotation": schema.StringAttribute{
+				Description: "Opaque rotation trigger. Changing this value regenerates the access key on the same user; " +
+					"the bucket policies of grant_backup_reader name the user, not its key, so they hold for the new key.",
+				MarkdownDescription: "Opaque rotation trigger. Changing this value regenerates the access key on the same user; " +
+					"the bucket policies of `grant_backup_reader` name the user, not its key, so they hold for the new key.",
+				Optional: true,
 			},
 			"access_key_id": schema.StringAttribute{
 				Description:         "Minted S3 access key id of the reader.",
@@ -111,6 +120,27 @@ func (r *s3ReaderResource) Configure(_ context.Context, req resource.ConfigureRe
 	r.client = client
 }
 
+// ModifyPlan forces the computed key fields to unknown when key_rotation
+// changes, so Terraform expects (and accepts) the rotated credential the
+// Update produces. UseStateForUnknown keeps them stable on every other plan.
+func (r *s3ReaderResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return // create or destroy
+	}
+
+	var stateRotation, planRotation types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("key_rotation"), &stateRotation)...)
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("key_rotation"), &planRotation)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !stateRotation.Equal(planRotation) {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("access_key_id"), types.StringUnknown())...)
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("secret_access_key"), types.StringUnknown())...)
+	}
+}
+
 func (r *s3ReaderResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan s3ReaderModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -153,14 +183,29 @@ func (r *s3ReaderResource) Read(ctx context.Context, req resource.ReadRequest, r
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-// Update has nothing to change on the user: name forces replacement and every
-// other attribute is computed.
 func (r *s3ReaderResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan s3ReaderModel
+	var plan, state s3ReaderModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
+
+	name := plan.Name.ValueString()
+	access := state.AccessKeyID.ValueString()
+	secret := state.SecretAccessKey.ValueString()
+	if !state.KeyRotation.Equal(plan.KeyRotation) {
+		newAccess, newSecret, err := r.client.RotateKey(ctx, name, access)
+		if err != nil {
+			resp.Diagnostics.AddError("Failed to rotate S3 reader key", err.Error())
+			return
+		}
+		access, secret = newAccess, newSecret
+	}
+
+	plan.ID = types.StringValue(name)
+	plan.AccessKeyID = types.StringValue(access)
+	plan.SecretAccessKey = types.StringValue(secret)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 }
 

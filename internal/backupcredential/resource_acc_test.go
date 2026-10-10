@@ -24,15 +24,19 @@ func liveClient() *backupcredential.Client {
 
 // credentialConfig builds a single-resource HCL config. Provider URL/token
 // come from the env vars TestAccProtoV6ProviderFactories already plumbs through.
-func credentialConfig(scope string, retention int) string {
+func credentialConfig(scope string, retention int, rotation string) string {
+	rotationLine := ""
+	if rotation != "" {
+		rotationLine = fmt.Sprintf("  rotation  = %q\n", rotation)
+	}
 	return fmt.Sprintf(`
 provider "homelab" {}
 
 resource "homelab_backup_credential" "test" {
   scope     = %q
   retention = %d
-}
-`, scope, retention)
+%s}
+`, scope, retention, rotationLine)
 }
 
 func TestAccBackupCredential_basic(t *testing.T) {
@@ -46,7 +50,7 @@ func TestAccBackupCredential_basic(t *testing.T) {
 		CheckDestroy:             testAccCheckCredentialDestroyed(scope),
 		Steps: []resource.TestStep{
 			{
-				Config: credentialConfig(scope, 10),
+				Config: credentialConfig(scope, 10, ""),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("homelab_backup_credential.test", "id", scope),
 					resource.TestCheckResourceAttr("homelab_backup_credential.test", "scope", scope),
@@ -61,10 +65,19 @@ func TestAccBackupCredential_basic(t *testing.T) {
 				ImportStateVerify: true,
 			},
 			{
-				Config: credentialConfig(scope, 25),
+				Config: credentialConfig(scope, 25, ""),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("homelab_backup_credential.test", "retention", "25"),
 					checkAttrEqualsCaptured("homelab_backup_credential.test", "token", &capturedToken),
+				),
+			},
+			{
+				// Rotate the token; the scope and its retention stay.
+				Config: credentialConfig(scope, 25, "v2"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("homelab_backup_credential.test", "id", scope),
+					resource.TestCheckResourceAttr("homelab_backup_credential.test", "retention", "25"),
+					checkAttrChangedFrom("homelab_backup_credential.test", "token", &capturedToken),
 				),
 			},
 		},
@@ -98,6 +111,19 @@ func checkAttrEqualsCaptured(resourceName, attr string, captured *string) resour
 		got := rs.Primary.Attributes[attr]
 		if got != *captured {
 			return fmt.Errorf("%s.%s = %q, want %q (preserved across update)", resourceName, attr, got, *captured)
+		}
+		return nil
+	}
+}
+
+func checkAttrChangedFrom(resourceName, attr string, prev *string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("resource %s not in state", resourceName)
+		}
+		if got := rs.Primary.Attributes[attr]; got == *prev {
+			return fmt.Errorf("%s.%s = %q did not change after rotation", resourceName, attr, got)
 		}
 		return nil
 	}

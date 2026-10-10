@@ -16,6 +16,7 @@ var (
 	_ resource.Resource                = (*backupCredentialResource)(nil)
 	_ resource.ResourceWithConfigure   = (*backupCredentialResource)(nil)
 	_ resource.ResourceWithImportState = (*backupCredentialResource)(nil)
+	_ resource.ResourceWithModifyPlan  = (*backupCredentialResource)(nil)
 )
 
 // ProviderData is the interface the provider's wiring satisfies. It lets this
@@ -37,6 +38,7 @@ type backupCredentialModel struct {
 	ID        types.String `tfsdk:"id"`
 	Scope     types.String `tfsdk:"scope"`
 	Retention types.Int64  `tfsdk:"retention"`
+	Rotation  types.String `tfsdk:"rotation"`
 	Token     types.String `tfsdk:"token"`
 }
 
@@ -70,9 +72,14 @@ func (r *backupCredentialResource) Schema(_ context.Context, _ resource.SchemaRe
 				MarkdownDescription: "Number of stored objects to retain in this scope. Integer in `[1, 100]`.",
 				Required:            true,
 			},
+			"rotation": schema.StringAttribute{
+				Description:         "Opaque rotation trigger. Changing this value re-mints the token on the same scope; objects already uploaded under the scope are untouched.",
+				MarkdownDescription: "Opaque rotation trigger. Changing this value re-mints the token on the same scope; objects already uploaded under the scope are untouched.",
+				Optional:            true,
+			},
 			"token": schema.StringAttribute{
-				Description:         "Server-minted bearer token authorized to upload to this scope. Stable for the lifetime of the scope; rotate by tainting the resource.",
-				MarkdownDescription: "Server-minted bearer token authorized to upload to this scope. Stable for the lifetime of the scope; rotate by tainting the resource.",
+				Description:         "Server-minted bearer token authorized to upload to this scope. Stable until rotation changes.",
+				MarkdownDescription: "Server-minted bearer token authorized to upload to this scope. Stable until `rotation` changes.",
 				Computed:            true,
 				Sensitive:           true,
 				PlanModifiers: []planmodifier.String{
@@ -105,6 +112,26 @@ func (r *backupCredentialResource) Configure(_ context.Context, req resource.Con
 		return
 	}
 	r.client = client
+}
+
+// ModifyPlan forces the token to unknown when rotation changes, so Terraform
+// expects (and accepts) the token the Update re-mints. UseStateForUnknown keeps
+// it stable on every other plan.
+func (r *backupCredentialResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return // create or destroy
+	}
+
+	var stateRotation, planRotation types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("rotation"), &stateRotation)...)
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("rotation"), &planRotation)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
+	if !stateRotation.Equal(planRotation) {
+		resp.Diagnostics.Append(resp.Plan.SetAttribute(ctx, path.Root("token"), types.StringUnknown())...)
+	}
 }
 
 func (r *backupCredentialResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
@@ -154,13 +181,22 @@ func (r *backupCredentialResource) Read(ctx context.Context, req resource.ReadRe
 }
 
 func (r *backupCredentialResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan backupCredentialModel
+	var plan, state backupCredentialModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	res, err := r.client.Put(ctx, plan.Scope.ValueString(), int(plan.Retention.ValueInt64()))
+	scope := plan.Scope.ValueString()
+	retention := int(plan.Retention.ValueInt64())
+	var res *Credential
+	var err error
+	if state.Rotation.Equal(plan.Rotation) {
+		res, err = r.client.Put(ctx, scope, retention)
+	} else {
+		res, err = r.client.Rotate(ctx, scope, retention)
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to update backup credential", err.Error())
 		return

@@ -255,3 +255,70 @@ func TestClientTrailingSlashBaseURL(t *testing.T) {
 		t.Errorf("path = %q, want /credentials/electronics-inventory", seenPath)
 	}
 }
+
+func TestClientRotate(t *testing.T) {
+	var calls []string
+	client, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/credentials/youtrack" {
+			t.Errorf("path = %s", r.URL.Path)
+		}
+		calls = append(calls, r.Method)
+		switch r.Method {
+		case http.MethodDelete:
+			w.WriteHeader(http.StatusNoContent)
+		case http.MethodPut:
+			var body putRequest
+			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+				t.Fatalf("decode body: %v", err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(Credential{Scope: "youtrack", Token: "tok-new", Retention: body.Retention, Kind: body.Kind})
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+		}
+	})
+
+	res, err := client.Rotate(context.Background(), "youtrack", 10)
+	if err != nil {
+		t.Fatalf("Rotate returned error: %v", err)
+	}
+	if strings.Join(calls, " ") != "DELETE PUT" {
+		t.Errorf("calls = %v, want DELETE then PUT", calls)
+	}
+	if res.Token != "tok-new" || res.Retention != 10 {
+		t.Errorf("unexpected credential: %+v", res)
+	}
+}
+
+func TestClientRotate_PutFails(t *testing.T) {
+	client, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodDelete {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	_, err := client.Rotate(context.Background(), "youtrack", 10)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), `credential "youtrack" was deleted but not re-created`) {
+		t.Errorf("Error() = %q, want it to say the scope was left without a credential", err.Error())
+	}
+}
+
+func TestClientRotate_DeleteFails(t *testing.T) {
+	client, _ := newTestClient(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete {
+			t.Errorf("%s sent after a failed DELETE", r.Method)
+		}
+		w.WriteHeader(http.StatusNotFound)
+		_ = json.NewEncoder(w).Encode(errorEnvelope{Error: "not_found", Message: "gone"})
+	})
+
+	_, err := client.Rotate(context.Background(), "youtrack", 10)
+	if !IsNotFound(err) {
+		t.Errorf("Rotate error = %v, want the DELETE's not_found", err)
+	}
+}

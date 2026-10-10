@@ -58,6 +58,20 @@ func (c *Client) Delete(ctx context.Context, scope string) error {
 	return c.do(ctx, http.MethodDelete, c.credentialPath(scope), nil, nil)
 }
 
+// Rotate re-mints the scope's token. The server mints a token only on the PUT
+// that creates a scope, so the record is deleted first; objects already
+// uploaded under the scope stay.
+func (c *Client) Rotate(ctx context.Context, scope string, retention int) (*Credential, error) {
+	if err := c.Delete(ctx, scope); err != nil {
+		return nil, fmt.Errorf("delete credential %q: %w", scope, err)
+	}
+	res, err := c.Put(ctx, scope, retention)
+	if err != nil {
+		return nil, fmt.Errorf("credential %q was deleted but not re-created: %w", scope, err)
+	}
+	return res, nil
+}
+
 func (c *Client) credentialPath(scope string) string {
 	return c.baseURL + "/credentials/" + url.PathEscape(scope)
 }

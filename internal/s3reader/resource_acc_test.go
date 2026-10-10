@@ -13,18 +13,24 @@ import (
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
-func readerConfig(name string) string {
+func readerConfig(name, rotation string) string {
+	rotationLine := ""
+	if rotation != "" {
+		rotationLine = fmt.Sprintf("  key_rotation = %q\n", rotation)
+	}
 	return fmt.Sprintf(`
 provider "homelab" {}
 
 resource "homelab_s3_reader" "test" {
   name = %q
-}
-`, name)
+%s}
+`, name, rotationLine)
 }
 
 func TestAccS3Reader_basic(t *testing.T) {
 	name := "tfacc-" + strings.ToLower(acctest.RandString(8))
+
+	var firstAccessKey string
 
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -32,12 +38,13 @@ func TestAccS3Reader_basic(t *testing.T) {
 		CheckDestroy:             testAccCheckReaderDestroyed(t, name),
 		Steps: []resource.TestStep{
 			{
-				Config: readerConfig(name),
+				Config: readerConfig(name, ""),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("homelab_s3_reader.test", "id", name),
 					resource.TestCheckResourceAttrSet("homelab_s3_reader.test", "access_key_id"),
 					resource.TestCheckResourceAttrSet("homelab_s3_reader.test", "secret_access_key"),
 					testAccCheckReaderUser(t, name),
+					captureAttr("homelab_s3_reader.test", "access_key_id", &firstAccessKey),
 				),
 			},
 			{
@@ -45,8 +52,41 @@ func TestAccS3Reader_basic(t *testing.T) {
 				ImportState:       true,
 				ImportStateVerify: true,
 			},
+			{
+				// Rotate the key; the user stays, its access key changes.
+				Config: readerConfig(name, "v2"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("homelab_s3_reader.test", "id", name),
+					checkAttrChangedFrom("homelab_s3_reader.test", "access_key_id", &firstAccessKey),
+					testAccCheckReaderUser(t, name),
+				),
+			},
 		},
 	})
+}
+
+func captureAttr(resourceName, attr string, dst *string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("resource %s not in state", resourceName)
+		}
+		*dst = rs.Primary.Attributes[attr]
+		return nil
+	}
+}
+
+func checkAttrChangedFrom(resourceName, attr string, prev *string) resource.TestCheckFunc {
+	return func(s *terraform.State) error {
+		rs, ok := s.RootModule().Resources[resourceName]
+		if !ok {
+			return fmt.Errorf("resource %s not in state", resourceName)
+		}
+		if got := rs.Primary.Attributes[attr]; got == *prev {
+			return fmt.Errorf("%s.%s = %q did not change after rotation", resourceName, attr, got)
+		}
+		return nil
+	}
 }
 
 // testAccCheckReaderUser checks the live user holds buckets=read and no other
