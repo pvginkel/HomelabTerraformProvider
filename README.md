@@ -208,15 +208,24 @@ resource "homelab_dns_reservation" "k8s_leader" {
 ### `homelab_backup_credential`
 
 An upload credential managed by the homelab backup server. The server
-mints the bearer token on create; the token is stable for the lifetime of
-the scope. To rotate, taint the resource — Terraform will destroy and
-recreate, producing a new token. Objects already uploaded under the scope
-are **not** removed when the credential is deleted.
+mints the bearer token on create; the token is stable until `rotation`
+changes. Any change of `rotation`, a set value dropped included, re-mints
+the token in place on the same scope: the server mints a token only when it
+creates a scope, so the provider deletes the scope's credential and creates
+it again with the same retention. Between the two the scope has no
+credential; a create that fails errors `credential "<scope>" was deleted but
+not re-created`, and the next refresh drops the resource, so the next apply
+creates it again with a new token. A change of `retention` alone keeps the
+token. Objects already uploaded under the scope are **not** removed when the
+credential is deleted.
 
 ```hcl
 resource "homelab_backup_credential" "electronics_inventory" {
   scope     = "electronics-inventory"
   retention = 10
+
+  # Change to re-mint the token on the same scope.
+  rotation = "1"
 }
 
 output "upload_token" {
@@ -229,7 +238,8 @@ output "upload_token" {
 |-------------|--------|----------|---------------------------------------------------------------------------------------------------------------------|
 | `scope`     | string | yes      | Scope key. URL segment and folder name under the rclone destination. **Changing forces destroy + recreate.**        |
 | `retention` | number | yes      | Number of stored objects to retain in the scope. Integer in `[1, 100]`.                                             |
-| `token`     | string | computed | Server-minted bearer token authorized to upload to this scope. Sensitive; stable for the lifetime of the scope.     |
+| `rotation`  | string | no       | Opaque rotation trigger. Changing it re-mints the token on the same scope; uploaded objects are untouched.          |
+| `token`     | string | computed | Server-minted bearer token authorized to upload to this scope. Sensitive; stable until `rotation` changes.          |
 | `id`        | string | computed | Equals `scope`.                                                                                                     |
 
 **Import:** `terraform import homelab_backup_credential.example <scope>`.
@@ -352,7 +362,10 @@ holds one admin capability, `buckets=read`, for enumerating buckets through the
 Admin Ops API — S3 `ListBuckets` returns only the caller's own buckets. Object
 access comes from `homelab_s3_storage`'s `grant_backup_reader`, on a provider
 whose `s3_backup_reader` is this resource's `name`. The key is minted on
-create, and there is no rotation trigger. Refresh tracks only that the user
+create. Any change of `key_rotation`, a set value dropped included, mints a
+new key on the same user, then removes the old one. The bucket policies of
+`grant_backup_reader` name the user (`arn:aws:iam:::user/<name>`), not a key,
+so a rotation leaves them as they are. Refresh tracks only that the user
 exists and its key; the capability and `max_buckets` are set on create and not
 checked afterwards. Renaming forces destroy + recreate. **Destroy removes the
 user.**
@@ -360,6 +373,9 @@ user.**
 ```hcl
 resource "homelab_s3_reader" "backup_reader" {
   name = "backup-reader"
+
+  # Change to mint a new key on the same user.
+  key_rotation = "1"
 }
 
 output "reader_secret_access_key" {
@@ -371,6 +387,7 @@ output "reader_secret_access_key" {
 | Attribute           | Type   | Required | Description                                             |
 |---------------------|--------|----------|---------------------------------------------------------|
 | `name`              | string | yes      | RGW user id. **Changing forces destroy + recreate.**    |
+| `key_rotation`      | string | no       | Opaque rotation trigger. Changing it mints a new key on the same user and removes the old one. |
 | `access_key_id`     | string | computed | Minted S3 access key id.                                |
 | `secret_access_key` | string | computed | Minted S3 secret access key. Sensitive.                 |
 | `id`                | string | computed | Equals `name`.                                          |
